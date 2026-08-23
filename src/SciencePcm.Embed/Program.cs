@@ -169,6 +169,7 @@ internal static class Program
         finally
         {
             foreach (var embedder in embedders) embedder.Dispose();
+            DisposeSessions();
         }
 
         return 0;
@@ -286,6 +287,7 @@ internal static class Program
             JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
 
         foreach (var embedder in embedders) embedder.Dispose();
+        DisposeSessions();
 
         Console.WriteLine();
         Console.WriteLine($"Vectors written : {written:N0} x {dimensions}");
@@ -345,13 +347,31 @@ internal static class Program
     private static TextEmbedder[] CreateEmbedders(Options options, out int dimensions)
     {
         var embedderOptions = ToEmbedderOptions(options);
+        var sessionCount = Math.Clamp(options.Sessions, 1, options.Workers);
+
+        _sessions = new Microsoft.ML.OnnxRuntime.InferenceSession[sessionCount];
+        for (var i = 0; i < sessionCount; i++)
+        {
+            _sessions[i] = TextEmbedder.CreateSession(options.ModelDirectory, options.IntraOpThreads);
+        }
+
         var embedders = new TextEmbedder[options.Workers];
         for (var i = 0; i < options.Workers; i++)
         {
-            embedders[i] = new TextEmbedder(embedderOptions);
+            embedders[i] = new TextEmbedder(embedderOptions, _sessions[i % sessionCount]);
         }
+
+        Console.WriteLine($"sessions={sessionCount} (shared across {options.Workers} workers)");
         dimensions = embedders[0].Dimensions;
         return embedders;
+    }
+
+    private static Microsoft.ML.OnnxRuntime.InferenceSession[] _sessions = [];
+
+    private static void DisposeSessions()
+    {
+        foreach (var session in _sessions) session.Dispose();
+        _sessions = [];
     }
 
     private static IEnumerable<List<string>> Chunk(List<string> items, int size)
@@ -399,7 +419,10 @@ internal sealed class Options
                                  Default: fast
 
         Throughput:
-          --workers <n>          Concurrent ONNX sessions. Default: 16
+          --workers <n>          Concurrent embedding threads. Default: 16
+          --sessions <n>         ONNX sessions shared by those workers. Each session holds
+                                 its own copy of the weights (~440 MB), so keep this low.
+                                 Default: 1
           --intra-threads <n>    Threads per session. Default: 8
           --batch <n>            Texts per forward pass. Default: 64
           --shard-size <n>       Vectors per output shard. Default: 250000
@@ -427,6 +450,7 @@ internal sealed class Options
     public bool LowerCase { get; private set; } = true;
     public TokenizerKind Tokenizer { get; private set; } = TokenizerKind.Fast;
     public int Workers { get; private set; } = 16;
+    public int Sessions { get; private set; } = 1;
     public int IntraOpThreads { get; private set; } = 8;
     public int BatchSize { get; private set; } = 64;
     public int ShardSize { get; private set; } = 250_000;
@@ -484,6 +508,7 @@ internal sealed class Options
                     };
                     break;
                 case "--workers": options.Workers = int.Parse(Next()); break;
+                case "--sessions": options.Sessions = int.Parse(Next()); break;
                 case "--intra-threads": options.IntraOpThreads = int.Parse(Next()); break;
                 case "--batch": options.BatchSize = int.Parse(Next()); break;
                 case "--shard-size": options.ShardSize = int.Parse(Next()); break;

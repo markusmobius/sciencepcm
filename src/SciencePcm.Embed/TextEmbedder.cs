@@ -29,6 +29,7 @@ public sealed record EmbedderOptions(
 public sealed class TextEmbedder : IDisposable
 {
     private readonly InferenceSession _session;
+    private readonly bool _ownsSession;
     private readonly ICorpusTokenizer _tokenizer;
     private readonly string[] _inputNames;
     private readonly bool _needsTokenTypeIds;
@@ -41,24 +42,23 @@ public sealed class TextEmbedder : IDisposable
     /// <summary>Padded token count of the most recent batch, for throughput accounting.</summary>
     public long LastBatchTokens { get; private set; }
 
-    public TextEmbedder(EmbedderOptions options)
+    public TextEmbedder(EmbedderOptions options, InferenceSession? sharedSession = null)
     {
         _options = options;
 
         var modelPath = ResolveModelPath(options.ModelDirectory);
 
-        var sessionOptions = new SessionOptions
+        if (sharedSession is not null)
         {
-            IntraOpNumThreads = options.IntraOpThreads,
-            InterOpNumThreads = 1,
-            ExecutionMode = ExecutionMode.ORT_SEQUENTIAL,
-            GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL,
-        };
+            _session = sharedSession;
+            _ownsSession = false;
+        }
+        else
+        {
+            _session = CreateSession(modelPath, options.IntraOpThreads);
+            _ownsSession = true;
+        }
 
-        // Many concurrent sessions on a high-core-count box burn cores spin-waiting.
-        sessionOptions.AddSessionConfigEntry("session.intra_op.allow_spinning", "0");
-
-        _session = new InferenceSession(modelPath, sessionOptions);
         _tokenizer = TokenizerFactory.Create(
             options.ModelDirectory, options.Tokenizer, options.MaxTokens, options.LowerCase);
 
@@ -71,6 +71,28 @@ public sealed class TextEmbedder : IDisposable
         _outputIsAlreadyPooled = _session.OutputMetadata[_outputName].Dimensions.Length == 2;
 
         Dimensions = Embed(["probe"])[0].Length;
+    }
+
+    /// <summary>
+    /// Run() is thread-safe, so one session can back many workers. Creating a session per
+    /// worker duplicates the weights, which wrecks cache locality and NUMA placement.
+    /// </summary>
+    public static InferenceSession CreateSession(string modelDirectory, int intraOpThreads)
+    {
+        var modelPath = File.Exists(modelDirectory) ? modelDirectory : ResolveModelPath(modelDirectory);
+
+        var sessionOptions = new SessionOptions
+        {
+            IntraOpNumThreads = intraOpThreads,
+            InterOpNumThreads = 1,
+            ExecutionMode = ExecutionMode.ORT_SEQUENTIAL,
+            GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL,
+        };
+
+        // Spin-waiting threads fight each other when many sessions share a socket.
+        sessionOptions.AddSessionConfigEntry("session.intra_op.allow_spinning", "0");
+
+        return new InferenceSession(modelPath, sessionOptions);
     }
 
     private static string ResolveModelPath(string directory)
@@ -205,7 +227,10 @@ public sealed class TextEmbedder : IDisposable
         _needsTokenTypeIds,
         _outputName);
 
-    public void Dispose() => _session.Dispose();
+    public void Dispose()
+    {
+        if (_ownsSession) _session.Dispose();
+    }
 }
 
 public sealed record JsonObjectSnapshot(
