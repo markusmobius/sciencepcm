@@ -190,6 +190,15 @@ $syncArguments = @((Join-Path $PSScriptRoot 'sync.py'))
 if ($CheckOnly) { $syncArguments += '--check' }
 if ($IncludeOptional) { $syncArguments += '--include-optional' }
 
+# RemoteBlobServer parses its port from the first stdout line, but prints a MAXCORES
+# warning there first when the variable is set, which breaks startup. Cleared for the
+# duration and restored afterwards.
+$savedMaxCores = $env:MAXCORES
+if ($null -ne $savedMaxCores) {
+    Write-Host "  clearing MAXCORES ($savedMaxCores) for the blob server"
+    Remove-Item Env:MAXCORES -ErrorAction SilentlyContinue
+}
+
 Push-Location $repo
 try {
     & $Python @syncArguments
@@ -203,6 +212,7 @@ try {
 }
 finally {
     Pop-Location
+    if ($null -ne $savedMaxCores) { $env:MAXCORES = $savedMaxCores }
 }
 
 Write-Step 'Done'
