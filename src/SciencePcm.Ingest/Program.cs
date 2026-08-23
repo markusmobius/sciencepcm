@@ -117,6 +117,12 @@ internal static class Program
         Console.WriteLine($"Skipped (no body): {stats.SkippedNoBody:N0}");
         Console.WriteLine($"Failed           : {stats.Failed:N0}");
         Console.WriteLine($"Elapsed          : {stopwatch.Elapsed}");
+        Console.WriteLine();
+        Console.WriteLine("Section distribution:");
+        foreach (var (kind, count) in stats.SectionKinds.OrderByDescending(kv => kv.Value))
+        {
+            Console.WriteLine($"  {kind,-18} {count,10:N0} chunks  {100.0 * count / Math.Max(1, stats.Chunks),5:F1}%");
+        }
 
         return stats.Failed > files.Count / 100 ? 2 : 0;
     }
@@ -194,6 +200,14 @@ internal static class Program
             articles.Add(result.Article);
             chunks.AddRange(result.Chunks);
 
+            foreach (var chunk in result.Chunks)
+            {
+                stats.SectionKinds.TryGetValue(chunk.SectionKind, out var seen);
+                stats.SectionKinds[chunk.SectionKind] = seen + 1;
+                stats.SectionWords.TryGetValue(chunk.SectionKind, out var words);
+                stats.SectionWords[chunk.SectionKind] = words + chunk.WordCount;
+            }
+
             if (articles.Count >= options.ShardSize)
             {
                 await FlushAsync(options, shard++, articles, chunks, stats);
@@ -267,6 +281,16 @@ internal static class Program
             },
             elapsed_seconds = elapsed.TotalSeconds,
             peak_working_set_bytes = Process.GetCurrentProcess().PeakWorkingSet64,
+            section_kinds = stats.SectionKinds
+                .OrderByDescending(kv => kv.Value)
+                .ToDictionary(
+                    kv => kv.Key,
+                    kv => new
+                    {
+                        chunks = kv.Value,
+                        words = stats.SectionWords.GetValueOrDefault(kv.Key),
+                        chunk_percent = Math.Round(100.0 * kv.Value / Math.Max(1, stats.Chunks), 2),
+                    }),
         };
 
         var path = Path.Combine(options.OutputDirectory, "ingest-report.json");
@@ -290,6 +314,10 @@ internal sealed class IngestStats
     public int SkippedNoBody;
     public int SkippedNotArticle;
     public int Failed;
+
+    // Written only by the single-reader writer task.
+    public Dictionary<string, long> SectionKinds { get; } = [];
+    public Dictionary<string, long> SectionWords { get; } = [];
 }
 
 internal sealed record CorpusInput(string Corpus, string Root);

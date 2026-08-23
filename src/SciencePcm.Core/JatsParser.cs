@@ -373,10 +373,34 @@ public static partial class JatsParser
                     {
                         continue;
                     }
+
+                    // Nature-style citations are <sup><xref>1</xref>-<xref>5</xref></sup>.
+                    // Once the xrefs are dropped only separators remain, so discard the
+                    // whole superscript unless it still carries real content (e.g. 10-7).
+                    if (name is "sup" or "sub")
+                    {
+                        var scratch = new StringBuilder();
+                        AppendText(child, scratch, allowFloats);
+                        if (HasAlphanumeric(scratch))
+                        {
+                            builder.Append(scratch);
+                        }
+                        continue;
+                    }
+
                     AppendText(child, builder, allowFloats);
                     break;
             }
         }
+    }
+
+    private static bool HasAlphanumeric(StringBuilder builder)
+    {
+        for (var i = 0; i < builder.Length; i++)
+        {
+            if (char.IsLetterOrDigit(builder[i])) return true;
+        }
+        return false;
     }
 
     private static string BuildArticleKey(ArticleRow row, string path)
@@ -404,6 +428,14 @@ public static partial class TextUtil
     [GeneratedRegex(@"\(\s*[,;\u2013\u2014-]*\s*\)")]
     private static partial Regex EmptyParens();
 
+    // Residue from dropped citation markers: "health,." / "stress\u2013." / "pathways,,,."
+    // ASCII hyphen is excluded so "state-of-the-art." survives.
+    [GeneratedRegex(@"[,;\u2013\u2014]+(?=\s*[.,;:!?])")]
+    private static partial Regex DanglingSeparatorBeforePunctuation();
+
+    [GeneratedRegex(@"[,;\u2013\u2014]+\s*$")]
+    private static partial Regex DanglingSeparatorAtEnd();
+
     [GeneratedRegex(@"\s+([,.;:!?])")]
     private static partial Regex SpaceBeforePunctuation();
 
@@ -421,6 +453,8 @@ public static partial class TextUtil
         var text = raw.Replace('\u00a0', ' ').Replace('\r', ' ').Replace('\n', ' ').Replace('\t', ' ');
         text = EmptyBrackets().Replace(text, "");
         text = EmptyParens().Replace(text, "");
+        text = DanglingSeparatorBeforePunctuation().Replace(text, "");
+        text = DanglingSeparatorAtEnd().Replace(text, "");
         text = SpaceBeforePunctuation().Replace(text, "$1");
         text = RepeatedWhitespace().Replace(text, " ");
         return text.Trim();
