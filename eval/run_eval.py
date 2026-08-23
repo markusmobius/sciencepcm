@@ -15,8 +15,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import threading
 import time
 from abc import ABC, abstractmethod
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import duckdb
@@ -40,7 +42,16 @@ class DuckDbBm25Retriever(Retriever):
         key_column: str = "ArticleKey",
         text_column: str = "Text",
         title_column: str | None = "Title",
+        read_only: bool = False,
+        duckdb_threads: int | None = None,
     ) -> None:
+        if read_only:
+            self.connection = duckdb.connect(str(database), read_only=True)
+            self.connection.execute("LOAD fts;")
+            if duckdb_threads:
+                self.connection.execute(f"SET threads={duckdb_threads}")
+            return
+
         fresh = rebuild or not database.exists()
         if rebuild and database.exists():
             database.unlink()
@@ -131,6 +142,20 @@ def main() -> int:
     parser.add_argument("--token", default=None)
     parser.add_argument("--k", type=int, default=100)
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Parallel query threads. DuckDB FTS is a full scan per query, so this is the "
+        "only practical way to score the full query set. Latency stats are suppressed "
+        "when > 1 because wall-clock timings become contention-bound.",
+    )
+    parser.add_argument(
+        "--duckdb-threads",
+        type=int,
+        default=8,
+        help="Threads per DuckDB connection when --workers > 1.",
+    )
     parser.add_argument("--out", type=Path, default=None, help="Write summary JSON here.")
     args = parser.parse_args()
 
@@ -154,18 +179,41 @@ def main() -> int:
         name = f"http:{args.endpoint}"
 
     qrels = load_qrels(args.qrels, args.limit)
-    print(f"Evaluating {len(qrels):,} queries at k={args.k} ...")
+    print(f"Evaluating {len(qrels):,} queries at k={args.k} with {args.workers} worker(s) ...")
 
     accumulator = MetricAccumulator()
-    for index, record in enumerate(qrels, start=1):
-        gold = set(record["gold_article_keys"])
-        started = time.perf_counter()
-        ranked = retriever.search(record["query_text"], args.k)
-        latency_ms = (time.perf_counter() - started) * 1000
-        accumulator.add(ranked, gold, latency_ms)
 
-        if index % 50 == 0:
-            print(f"  {index:,}/{len(qrels):,}")
+    if args.workers <= 1:
+        for index, record in enumerate(qrels, start=1):
+            gold = set(record["gold_article_keys"])
+            started = time.perf_counter()
+            ranked = retriever.search(record["query_text"], args.k)
+            latency_ms = (time.perf_counter() - started) * 1000
+            accumulator.add(ranked, gold, latency_ms)
+
+            if index % 50 == 0:
+                print(f"  {index:,}/{len(qrels):,}")
+    else:
+        if args.retriever != "duckdb-bm25":
+            parser.error("--workers > 1 is only supported for duckdb-bm25")
+
+        local = threading.local()
+
+        def search(record: dict) -> tuple[dict, list[str]]:
+            if not hasattr(local, "retriever"):
+                local.retriever = DuckDbBm25Retriever(
+                    args.chunks,
+                    args.database,
+                    read_only=True,
+                    duckdb_threads=args.duckdb_threads,
+                )
+            return record, local.retriever.search(record["query_text"], args.k)
+
+        with ThreadPoolExecutor(max_workers=args.workers) as pool:
+            for index, (record, ranked) in enumerate(pool.map(search, qrels), start=1):
+                accumulator.add(ranked, set(record["gold_article_keys"]))
+                if index % 50 == 0:
+                    print(f"  {index:,}/{len(qrels):,}")
 
     summary = accumulator.summary()
     print()
