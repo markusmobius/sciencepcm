@@ -35,21 +35,20 @@ class Retriever(ABC):
 class DuckDbBm25Retriever(Retriever):
     def __init__(
         self,
-        docs_glob: str,
-        database: Path,
+        docs_glob: str | None = None,
+        database: Path | None = None,
         rebuild: bool = False,
         id_column: str = "ChunkId",
         key_column: str = "ArticleKey",
         text_column: str = "Text",
         title_column: str | None = "Title",
-        read_only: bool = False,
         duckdb_threads: int | None = None,
+        connection: duckdb.DuckDBPyConnection | None = None,
     ) -> None:
-        if read_only:
-            self.connection = duckdb.connect(str(database), read_only=True)
-            self.connection.execute("LOAD fts;")
-            if duckdb_threads:
-                self.connection.execute(f"SET threads={duckdb_threads}")
+        # A cursor shares the parent database instance, which is the only safe way to
+        # query DuckDB from several threads. Reopening the file conflicts instead.
+        if connection is not None:
+            self.connection = connection
             return
 
         fresh = rebuild or not database.exists()
@@ -58,6 +57,8 @@ class DuckDbBm25Retriever(Retriever):
 
         self.connection = duckdb.connect(str(database))
         self.connection.execute("INSTALL fts; LOAD fts;")
+        if duckdb_threads:
+            self.connection.execute(f"SET threads={duckdb_threads}")
 
         if fresh:
             print(f"Building BM25 index from {docs_glob} ...")
@@ -86,6 +87,9 @@ class DuckDbBm25Retriever(Retriever):
             )
             rows = self.connection.execute("SELECT COUNT(*) FROM docs").fetchone()[0]
             print(f"  indexed {rows:,} documents in {time.perf_counter() - started:.1f}s")
+
+    def for_thread(self) -> "DuckDbBm25Retriever":
+        return DuckDbBm25Retriever(connection=self.connection.cursor())
 
     def search(self, query: str, k: int) -> list[str]:
         rows = self.connection.execute(
@@ -153,8 +157,9 @@ def main() -> int:
     parser.add_argument(
         "--duckdb-threads",
         type=int,
-        default=8,
-        help="Threads per DuckDB connection when --workers > 1.",
+        default=None,
+        help="Global DuckDB thread pool size. Concurrent queries share it, so leave unset "
+        "to use all cores.",
     )
     parser.add_argument("--out", type=Path, default=None, help="Write summary JSON here.")
     args = parser.parse_args()
@@ -170,6 +175,7 @@ def main() -> int:
             key_column=args.key_column,
             text_column=args.text_column,
             title_column=args.title_column or None,
+            duckdb_threads=args.duckdb_threads,
         )
         name = f"duckdb-bm25:{args.text_column}"
     else:
@@ -201,12 +207,7 @@ def main() -> int:
 
         def search(record: dict) -> tuple[dict, list[str]]:
             if not hasattr(local, "retriever"):
-                local.retriever = DuckDbBm25Retriever(
-                    args.chunks,
-                    args.database,
-                    read_only=True,
-                    duckdb_threads=args.duckdb_threads,
-                )
+                local.retriever = retriever.for_thread()
             return record, local.retriever.search(record["query_text"], args.k)
 
         with ThreadPoolExecutor(max_workers=args.workers) as pool:
