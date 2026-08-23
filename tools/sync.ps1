@@ -114,8 +114,14 @@ else {
     if ($LASTEXITCODE -ne 0) {
         Write-Host 'not installed, installing' -ForegroundColor Yellow
         if (-not $CheckOnly) {
-            & $Python -m pip install --quiet "git+https://github.com/markusmobius/newsprinceton-pythoncloud"
-            Assert-LastExit 'pip install RemoteBlobStore'
+            # uv-created venvs have no pip, so install through uv when it is available.
+            if (Get-Command uv -ErrorAction SilentlyContinue) {
+                & uv pip install --python $Python "git+https://github.com/markusmobius/newsprinceton-pythoncloud"
+            }
+            else {
+                & $Python -m pip install --quiet "git+https://github.com/markusmobius/newsprinceton-pythoncloud"
+            }
+            Assert-LastExit 'install RemoteBlobStore'
         }
     }
     else {
