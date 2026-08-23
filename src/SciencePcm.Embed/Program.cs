@@ -43,8 +43,13 @@ internal static class Program
         var root = document.RootElement;
         var maxTokens = root.GetProperty("max_tokens").GetInt32();
 
-        using var embedder = new TextEmbedder(ToEmbedderOptions(options) with { MaxTokens = maxTokens });
+        // Tokenizer only: loading the 416 MB ONNX graph would tell us nothing here.
+        var tokenizer = TokenizerFactory.Create(
+            options.ModelDirectory, options.Tokenizer, maxTokens, options.LowerCase);
         var vocabulary = File.ReadAllLines(Path.Combine(options.ModelDirectory, "vocab.txt"));
+
+        Console.WriteLine($"tokenizer: {TokenizerFactory.Describe(options.ModelDirectory, options.Tokenizer)}");
+        Console.WriteLine();
 
         string Render(IEnumerable<int> ids) => string.Join(
             ' ',
@@ -58,7 +63,7 @@ internal static class Program
             total++;
             var text = sample.GetProperty("text").GetString()!;
             var expected = sample.GetProperty("ids").EnumerateArray().Select(e => e.GetInt32()).ToArray();
-            var actual = embedder.Tokenize(text).ToArray();
+            var actual = tokenizer.Encode(text);
 
             if (expected.AsSpan().SequenceEqual(actual))
             {
@@ -89,7 +94,8 @@ internal static class Program
         options.MaxTokens,
         options.Pooling,
         options.Normalize,
-        options.LowerCase);
+        options.LowerCase,
+        options.Tokenizer);
 
     private static async Task<int> BenchmarkAsync(Options options)
     {
@@ -351,6 +357,9 @@ internal sealed class Options
           --pooling cls|mean     Default: cls (MedCPT and most BERT retrievers)
           --no-normalize         Skip L2 normalisation.
           --cased                Disable lower-casing (default is uncased).
+          --tokenizer fast|ml    fast = FastBertTokenizer, reads HuggingFace tokenizer.json.
+                                 ml   = Microsoft.ML.Tokenizers, reads vocab.txt.
+                                 Default: fast
 
         Throughput:
           --workers <n>          Concurrent ONNX sessions. Default: 16
@@ -376,6 +385,7 @@ internal sealed class Options
     public PoolingMode Pooling { get; private set; } = PoolingMode.Cls;
     public bool Normalize { get; private set; } = true;
     public bool LowerCase { get; private set; } = true;
+    public TokenizerKind Tokenizer { get; private set; } = TokenizerKind.Fast;
     public int Workers { get; private set; } = 16;
     public int IntraOpThreads { get; private set; } = 8;
     public int BatchSize { get; private set; } = 64;
@@ -423,6 +433,14 @@ internal sealed class Options
                     break;
                 case "--no-normalize": options.Normalize = false; break;
                 case "--cased": options.LowerCase = false; break;
+                case "--tokenizer":
+                    options.Tokenizer = Next().ToLowerInvariant() switch
+                    {
+                        "fast" => TokenizerKind.Fast,
+                        "ml" => TokenizerKind.MlNet,
+                        var other => throw new ArgumentException($"Unknown tokenizer '{other}'."),
+                    };
+                    break;
                 case "--workers": options.Workers = int.Parse(Next()); break;
                 case "--intra-threads": options.IntraOpThreads = int.Parse(Next()); break;
                 case "--batch": options.BatchSize = int.Parse(Next()); break;

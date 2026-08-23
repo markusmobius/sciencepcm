@@ -18,7 +18,8 @@ public sealed record EmbedderOptions(
     int MaxTokens = 512,
     PoolingMode Pooling = PoolingMode.Cls,
     bool Normalize = true,
-    bool LowerCase = true);
+    bool LowerCase = true,
+    TokenizerKind Tokenizer = TokenizerKind.Fast);
 
 /// <summary>
 /// One ONNX session plus tokenizer. Not thread-safe: create one per worker so that
@@ -28,7 +29,7 @@ public sealed record EmbedderOptions(
 public sealed class TextEmbedder : IDisposable
 {
     private readonly InferenceSession _session;
-    private readonly BertTokenizer _tokenizer;
+    private readonly ICorpusTokenizer _tokenizer;
     private readonly string[] _inputNames;
     private readonly bool _needsTokenTypeIds;
     private readonly string _outputName;
@@ -42,11 +43,6 @@ public sealed class TextEmbedder : IDisposable
         _options = options;
 
         var modelPath = ResolveModelPath(options.ModelDirectory);
-        var vocabPath = Path.Combine(options.ModelDirectory, "vocab.txt");
-        if (!File.Exists(vocabPath))
-        {
-            throw new FileNotFoundException($"vocab.txt not found in {options.ModelDirectory}.", vocabPath);
-        }
 
         var sessionOptions = new SessionOptions
         {
@@ -57,7 +53,8 @@ public sealed class TextEmbedder : IDisposable
         };
 
         _session = new InferenceSession(modelPath, sessionOptions);
-        _tokenizer = BertTokenizer.Create(vocabPath, new BertOptions { LowerCaseBeforeTokenization = options.LowerCase });
+        _tokenizer = TokenizerFactory.Create(
+            options.ModelDirectory, options.Tokenizer, options.MaxTokens, options.LowerCase);
 
         _inputNames = [.. _session.InputMetadata.Keys];
         _needsTokenTypeIds = _session.InputMetadata.ContainsKey("token_type_ids");
@@ -83,14 +80,7 @@ public sealed class TextEmbedder : IDisposable
     }
 
     /// <summary>Token ids for one text, used by the parity check.</summary>
-    public IReadOnlyList<int> Tokenize(string text) => _tokenizer.EncodeToIds(
-        text,
-        _options.MaxTokens,
-        addSpecialTokens: true,
-        out _,
-        out _,
-        considerPreTokenization: true,
-        considerNormalization: true);
+    public IReadOnlyList<int> Tokenize(string text) => _tokenizer.Encode(text);
 
     public float[][] Embed(IReadOnlyList<string> texts)
     {
@@ -100,14 +90,7 @@ public sealed class TextEmbedder : IDisposable
 
         for (var i = 0; i < batch; i++)
         {
-            encoded[i] = _tokenizer.EncodeToIds(
-                texts[i] ?? "",
-                _options.MaxTokens,
-                addSpecialTokens: true,
-                out _,
-                out _,
-                considerPreTokenization: true,
-                considerNormalization: true);
+            encoded[i] = _tokenizer.Encode(texts[i] ?? "");
             longest = Math.Max(longest, encoded[i].Count);
         }
 
