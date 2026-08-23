@@ -427,3 +427,11 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+# SciencePCM
+_smoke/
+out/
+*.duckdb
+*.duckdb.wal
+__pycache__/
+.venv/

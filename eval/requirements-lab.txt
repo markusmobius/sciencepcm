@@ -1,0 +1,15 @@
+# Heavy "lab" environment: ONNX export and model selection only.
+# Kept separate from eval/requirements.txt so the fast eval loop is not stuck
+# behind a multi-gigabyte torch install.
+#
+# CPU-only wheels. Without this index the default PyPI torch pulls bundled CUDA
+# libraries (several GB) that are dead weight on a machine with no GPU.
+--index-url https://download.pytorch.org/whl/cpu
+--extra-index-url https://pypi.org/simple
+
+torch>=2.4
+transformers>=4.44
+optimum[exporters]>=1.22
+onnx>=1.16
+onnxruntime>=1.19
+sentence-transformers>=3.0

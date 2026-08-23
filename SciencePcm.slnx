@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/SciencePcm.Core/SciencePcm.Core.csproj" />
+    <Project Path="src/SciencePcm.Ingest/SciencePcm.Ingest.csproj" />
+  </Folder>
+</Solution>
