@@ -44,6 +44,11 @@ internal static class Program
         var maxTokens = root.GetProperty("max_tokens").GetInt32();
 
         using var embedder = new TextEmbedder(ToEmbedderOptions(options) with { MaxTokens = maxTokens });
+        var vocabulary = File.ReadAllLines(Path.Combine(options.ModelDirectory, "vocab.txt"));
+
+        string Render(IEnumerable<int> ids) => string.Join(
+            ' ',
+            ids.Select(id => id >= 0 && id < vocabulary.Length ? vocabulary[id] : $"<{id}>"));
 
         var failures = 0;
         var total = 0;
@@ -63,8 +68,8 @@ internal static class Program
 
             failures++;
             Console.WriteLine($"  FAIL  {text}");
-            Console.WriteLine($"        python: {string.Join(' ', expected)}");
-            Console.WriteLine($"        csharp: {string.Join(' ', actual)}");
+            Console.WriteLine($"        python: {Render(expected)}");
+            Console.WriteLine($"        csharp: {Render(actual)}");
         }
 
         Console.WriteLine();

@@ -162,13 +162,16 @@ def write_parity(model_id: str, destination: Path, max_tokens: int) -> None:
     from transformers import AutoTokenizer
 
     tokenizer = AutoTokenizer.from_pretrained(model_id)
-    samples = [
-        {
-            "text": text,
-            "ids": tokenizer.encode(text, add_special_tokens=True, truncation=True, max_length=max_tokens),
-        }
-        for text in PROBE_TEXTS
-    ]
+    samples = []
+    for text in PROBE_TEXTS:
+        ids = tokenizer.encode(text, add_special_tokens=True, truncation=True, max_length=max_tokens)
+        samples.append(
+            {
+                "text": text,
+                "ids": ids,
+                "tokens": tokenizer.convert_ids_to_tokens(ids),
+            }
+        )
 
     payload = {
         "model_id": model_id,
