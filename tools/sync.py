@@ -55,7 +55,8 @@ MANIFEST = [
     Entry(
         TEMP / "models",
         "sciencepcm/models",
-        "exported MedCPT ONNX + vocab + tokenizer parity probes",
+        "exported MedCPT ONNX; only needed if HuggingFace is unreachable from the A100 box",
+        optional=True,
     ),
     Entry(
         NERDS21 / "dataset" / "OpenAlex-neuroscience" / "data",

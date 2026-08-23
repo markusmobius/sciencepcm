@@ -158,17 +158,11 @@ else {
 
 Write-Step 'Models'
 
-if (Test-Path (Join-Path $models 'medcpt-article\model.onnx')) {
-    Write-Host '  present in __temp'
-}
-else {
-    Write-Host '  NOT present in __temp.' -ForegroundColor Yellow
-    Write-Host '  Either move an existing export in:'
-    Write-Host "    Move-Item '$(Join-Path $Root 'mcpserver\models')' '$models'"
-    Write-Host '  or export them on the A100 box instead:'
-    Write-Host "    python eval\export_onnx.py --out <dir>"
-    Write-Host '  The sync will simply skip them.'
-}
+Write-Host '  Not synced by default. Inference runs on the A100 box, so export them there:'
+Write-Host '    python eval/export_onnx.py --out <dir>'
+Write-Host '  If HuggingFace turns out to be blocked there, put an export in'
+Write-Host "    $models"
+Write-Host '  and re-run with -IncludeOptional.'
 
 Write-Step 'Sync'
 
