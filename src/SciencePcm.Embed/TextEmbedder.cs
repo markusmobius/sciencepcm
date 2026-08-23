@@ -38,6 +38,9 @@ public sealed class TextEmbedder : IDisposable
 
     public int Dimensions { get; }
 
+    /// <summary>Padded token count of the most recent batch, for throughput accounting.</summary>
+    public long LastBatchTokens { get; private set; }
+
     public TextEmbedder(EmbedderOptions options)
     {
         _options = options;
@@ -51,6 +54,9 @@ public sealed class TextEmbedder : IDisposable
             ExecutionMode = ExecutionMode.ORT_SEQUENTIAL,
             GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL,
         };
+
+        // Many concurrent sessions on a high-core-count box burn cores spin-waiting.
+        sessionOptions.AddSessionConfigEntry("session.intra_op.allow_spinning", "0");
 
         _session = new InferenceSession(modelPath, sessionOptions);
         _tokenizer = TokenizerFactory.Create(
@@ -99,6 +105,7 @@ public sealed class TextEmbedder : IDisposable
         var ids = new DenseTensor<long>([batch, longest]);
         var mask = new DenseTensor<long>([batch, longest]);
         var types = _needsTokenTypeIds ? new DenseTensor<long>([batch, longest]) : null;
+        LastBatchTokens = (long)batch * longest;
 
         for (var row = 0; row < batch; row++)
         {

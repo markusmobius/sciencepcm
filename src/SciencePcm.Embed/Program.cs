@@ -120,11 +120,18 @@ internal static class Program
         var embedders = CreateEmbedders(options, out var dimensions);
         try
         {
-            embedders[0].Embed(sample.Take(Math.Min(options.BatchSize, sample.Count)).ToList());
+            // Every session must be warmed, not just the first: an unwarmed session's
+            // first inference is slow, and with many workers that dominates the timing.
+            Console.WriteLine($"Warming {options.Workers} session(s) ...");
+            var warm = sample.Take(Math.Min(options.BatchSize, sample.Count)).ToList();
+            Parallel.For(0, options.Workers, slot => embedders[slot].Embed(warm));
 
-            var batches = Chunk(sample, options.BatchSize).ToList();
+            var batches = Chunk(SortByLength(sample, options.SortBatches), options.BatchSize).ToList();
+            Console.WriteLine($"Running {batches.Count:N0} batches ...");
+
             var stopwatch = Stopwatch.StartNew();
             var next = -1;
+            long paddedTokens = 0;
 
             await Parallel.ForEachAsync(
                 Enumerable.Range(0, options.Workers),
@@ -136,17 +143,22 @@ internal static class Program
                         var index = Interlocked.Increment(ref next);
                         if (index >= batches.Count) break;
                         embedders[slot].Embed(batches[index]);
+                        Interlocked.Add(ref paddedTokens, embedders[slot].LastBatchTokens);
                     }
                 });
 
             stopwatch.Stop();
 
             var perSecond = sample.Count / stopwatch.Elapsed.TotalSeconds;
+            var tokensPerSecond = paddedTokens / stopwatch.Elapsed.TotalSeconds;
             Console.WriteLine();
             Console.WriteLine($"dimensions      : {dimensions}");
             Console.WriteLine($"texts           : {sample.Count:N0}");
             Console.WriteLine($"elapsed         : {stopwatch.Elapsed.TotalSeconds:F1}s");
             Console.WriteLine($"throughput      : {perSecond:N0} texts/s");
+            Console.WriteLine($"padded tokens/s : {tokensPerSecond:N0}");
+            Console.WriteLine($"avg padded len  : {(double)paddedTokens / sample.Count:F0} tokens/text");
+            Console.WriteLine($"total threads   : {options.Workers * options.IntraOpThreads}");
             Console.WriteLine();
             foreach (var corpus in new[] { 5_298_493L, 6_028_782L })
             {
@@ -184,25 +196,42 @@ internal static class Program
 
         var producer = Task.Run(async () =>
         {
-            var batch = new List<TextRecord>(options.BatchSize);
+            var buffer = new List<TextRecord>(Math.Max(options.BatchSize, options.SortBuffer));
             var seen = 0;
+
+            async Task DrainAsync()
+            {
+                if (buffer.Count == 0) return;
+
+                // Length-sort within the buffer only, so the stream is never fully materialised.
+                var ordered = options.SortBatches
+                    ? buffer.OrderBy(r => r.Text.Length).ToList()
+                    : buffer;
+
+                for (var i = 0; i < ordered.Count; i += options.BatchSize)
+                {
+                    var count = Math.Min(options.BatchSize, ordered.Count - i);
+                    await batchChannel.Writer.WriteAsync(ordered.GetRange(i, count));
+                }
+
+                buffer = new List<TextRecord>(Math.Max(options.BatchSize, options.SortBuffer));
+            }
 
             await foreach (var record in ParquetTextSource.ReadAsync(
                                options.Input, options.Schema, options.IncludeTitle))
             {
-                batch.Add(record);
+                buffer.Add(record);
                 seen++;
 
-                if (batch.Count >= options.BatchSize)
+                if (buffer.Count >= Math.Max(options.BatchSize, options.SortBuffer))
                 {
-                    await batchChannel.Writer.WriteAsync(batch);
-                    batch = new List<TextRecord>(options.BatchSize);
+                    await DrainAsync();
                 }
 
                 if (options.Limit is { } limit && seen >= limit) break;
             }
 
-            if (batch.Count > 0) await batchChannel.Writer.WriteAsync(batch);
+            await DrainAsync();
             batchChannel.Writer.Complete();
         });
 
@@ -332,6 +361,14 @@ internal static class Program
             yield return items.GetRange(i, Math.Min(size, items.Count - i));
         }
     }
+
+    /// <summary>
+    /// Groups similar-length texts together. A batch pads to its longest member, so mixing
+    /// a 60-token abstract with a 400-token one wastes most of the forward pass on padding.
+    /// Character count is a good enough proxy and avoids tokenising twice.
+    /// </summary>
+    private static List<string> SortByLength(List<string> texts, bool enabled)
+        => enabled ? texts.OrderBy(t => t.Length).ToList() : texts;
 }
 
 internal sealed class Options
@@ -366,6 +403,9 @@ internal sealed class Options
           --intra-threads <n>    Threads per session. Default: 8
           --batch <n>            Texts per forward pass. Default: 64
           --shard-size <n>       Vectors per output shard. Default: 250000
+          --sort-buffer <n>      Texts buffered and length-sorted before batching, which
+                                 cuts padding waste. 0 disables. Default: 65536
+          --no-sort              Disable length-sorted batching.
           --limit <n>            Stop after n texts.
           --benchmark            Measure throughput and project full-corpus time.
           --benchmark-texts <n>  Sample size for --benchmark. Default: 5000
@@ -390,6 +430,8 @@ internal sealed class Options
     public int IntraOpThreads { get; private set; } = 8;
     public int BatchSize { get; private set; } = 64;
     public int ShardSize { get; private set; } = 250_000;
+    public int SortBuffer { get; private set; } = 65_536;
+    public bool SortBatches { get; private set; } = true;
     public int? Limit { get; private set; }
     public bool Benchmark { get; private set; }
     public int BenchmarkTexts { get; private set; } = 5_000;
@@ -445,6 +487,8 @@ internal sealed class Options
                 case "--intra-threads": options.IntraOpThreads = int.Parse(Next()); break;
                 case "--batch": options.BatchSize = int.Parse(Next()); break;
                 case "--shard-size": options.ShardSize = int.Parse(Next()); break;
+                case "--sort-buffer": options.SortBuffer = int.Parse(Next()); break;
+                case "--no-sort": options.SortBatches = false; break;
                 case "--limit": options.Limit = int.Parse(Next()); break;
                 case "--benchmark": options.Benchmark = true; break;
                 case "--benchmark-texts": options.BenchmarkTexts = int.Parse(Next()); break;
