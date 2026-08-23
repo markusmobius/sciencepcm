@@ -7,10 +7,13 @@
 # After installing, confirm no CUDA payload came along on this GPU-less box:
 #   python -c "import torch; print(torch.__version__, torch.version.cuda)"
 # torch.version.cuda must print None.
+#
+# optimum is deliberately absent: 2.x dropped the [exporters] extra and moved ONNX
+# export into a separate package. export_onnx.py calls torch.onnx.export directly,
+# which also lets us fix the ONNX input/output names the C# side binds to.
 
 torch>=2.4
 transformers>=4.44
-optimum[exporters]>=1.22
 onnx>=1.16
 onnxruntime>=1.19
-sentence-transformers>=3.0
+numpy>=1.26
