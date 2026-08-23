@@ -24,7 +24,9 @@ from artifacts import DEFAULT_SERVER, client_hash  # noqa: E402
 
 NERDS21 = Path(r"\\nerds21\sciencepcm")
 
-# Anything under __temp is derived and disposable; sync.ps1 rebuilds what is missing.
+# Everything uploaded lives under __temp. Partly because it is all derived and
+# disposable, and partly because the uploader opens source files read-write to
+# fingerprint them, which fails on the read-only dataset directories.
 TEMP = NERDS21 / "mcpserver" / "__temp"
 
 
@@ -38,7 +40,7 @@ class Entry:
 
 MANIFEST = [
     Entry(
-        NERDS21 / "dataset" / "OpenAlex-neuroscience-abstracts" / "data",
+        TEMP / "abstracts",
         "sciencepcm/abstracts",
         "5.3M abstracts - the retrieval benchmark tier",
     ),
@@ -48,12 +50,12 @@ MANIFEST = [
         "REGENERABLE ONLY ON NERDS21 - needs the 62.8 GB of PMC/bioRxiv/medRxiv XML",
     ),
     Entry(
-        NERDS21 / "dataset" / "Questions-neuroscience",
+        TEMP / "questions",
         "sciencepcm/questions",
         "BioASQ + v0.2 evaluation questions",
     ),
     Entry(
-        NERDS21 / "dataset" / "OpenAlex-neuroscience" / "data",
+        TEMP / "openalex-works",
         "sciencepcm/openalex-works",
         "19 GB of full OpenAlex records; only needed for metadata beyond the abstracts projection",
         optional=True,

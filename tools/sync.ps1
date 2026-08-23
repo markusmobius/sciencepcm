@@ -179,6 +179,44 @@ else {
     }
 }
 
+Write-Step 'Staging read-only sources into __temp'
+
+# The uploader opens each source file read-write to fingerprint it, which the dataset
+# ACL forbids. Copying into __temp gives us files we own.
+$staged = [ordered]@{
+    'abstracts'      = Join-Path $dataset 'OpenAlex-neuroscience-abstracts\data'
+    'questions'      = Join-Path $dataset 'Questions-neuroscience'
+}
+if ($IncludeOptional) {
+    $staged['openalex-works'] = Join-Path $dataset 'OpenAlex-neuroscience\data'
+}
+
+foreach ($name in $staged.Keys) {
+    $source = $staged[$name]
+    $target = Join-Path $temp $name
+
+    if (-not (Test-Path $source)) {
+        Write-Host ("  {0,-16} source missing: {1}" -f $name, $source) -ForegroundColor Yellow
+        continue
+    }
+
+    $sourceCount = (Get-ChildItem $source -Recurse -File).Count
+    $targetCount = if (Test-Path $target) { (Get-ChildItem $target -Recurse -File).Count } else { 0 }
+
+    if ($targetCount -eq $sourceCount) {
+        Write-Host ("  {0,-16} already staged ({1} files)" -f $name, $targetCount)
+    }
+    elseif ($CheckOnly) {
+        Write-Host ("  {0,-16} would stage {1} files" -f $name, $sourceCount)
+    }
+    else {
+        Write-Host ("  {0,-16} copying {1} files ..." -f $name, $sourceCount)
+        New-Item -ItemType Directory -Force $target | Out-Null
+        Copy-Item -Path (Join-Path $source '*') -Destination $target -Recurse -Force
+        Write-Host ("  {0,-16} staged" -f $name)
+    }
+}
+
 Write-Step 'Sync'
 
 if (-not (Test-Path $Python)) {
