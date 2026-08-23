@@ -18,7 +18,7 @@ import json
 import threading
 import time
 from abc import ABC, abstractmethod
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import duckdb
@@ -197,8 +197,8 @@ def main() -> int:
             latency_ms = (time.perf_counter() - started) * 1000
             accumulator.add(ranked, gold, latency_ms)
 
-            if index % 50 == 0:
-                print(f"  {index:,}/{len(qrels):,}")
+            if index % 10 == 0 or index == 1:
+                print(f"  {index:,}/{len(qrels):,}  ({latency_ms:,.0f} ms)")
     else:
         if args.retriever != "duckdb-bm25":
             parser.error("--workers > 1 is only supported for duckdb-bm25")
@@ -211,10 +211,15 @@ def main() -> int:
             return record, local.retriever.search(record["query_text"], args.k)
 
         with ThreadPoolExecutor(max_workers=args.workers) as pool:
-            for index, (record, ranked) in enumerate(pool.map(search, qrels), start=1):
+            futures = [pool.submit(search, record) for record in qrels]
+            started = time.perf_counter()
+            for index, future in enumerate(as_completed(futures), start=1):
+                record, ranked = future.result()
                 accumulator.add(ranked, set(record["gold_article_keys"]))
-                if index % 50 == 0:
-                    print(f"  {index:,}/{len(qrels):,}")
+                if index % 10 == 0 or index == 1:
+                    rate = index / max(0.001, time.perf_counter() - started)
+                    remaining = (len(qrels) - index) / max(0.001, rate)
+                    print(f"  {index:,}/{len(qrels):,}  ({rate:.2f} q/s, ~{remaining / 60:.0f} min left)")
 
     summary = accumulator.summary()
     print()
