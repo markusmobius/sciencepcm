@@ -2,10 +2,11 @@
 # Kept separate from eval/requirements.txt so the fast eval loop is not stuck
 # behind a multi-gigabyte torch install.
 #
-# CPU-only wheels. Without this index the default PyPI torch pulls bundled CUDA
-# libraries (several GB) that are dead weight on a machine with no GPU.
---index-url https://download.pytorch.org/whl/cpu
---extra-index-url https://pypi.org/simple
+# No index is pinned here on purpose. The package index is supplied by the
+# environment (corporate proxy), so this file stays free of internal URLs.
+# After installing, confirm no CUDA payload came along on this GPU-less box:
+#   python -c "import torch; print(torch.__version__, torch.version.cuda)"
+# torch.version.cuda must print None.
 
 torch>=2.4
 transformers>=4.44
