@@ -23,16 +23,24 @@ def load_queries(path: Path) -> list[dict]:
         return [json.loads(line) for line in stream if line.strip()]
 
 
-def load_index_pmids(articles_glob: str) -> dict[str, str]:
-    """Map PMID -> ArticleKey for every article present in the index."""
+def load_index_pmids(articles_glob: str, pmid_column: str, key_column: str) -> dict[str, str]:
+    """Map PMID -> document key for every article present in the index."""
     rows = duckdb.sql(
         f"""
-        SELECT Pmid, ArticleKey
+        SELECT "{pmid_column}", "{key_column}"
         FROM read_parquet('{articles_glob}')
-        WHERE Pmid IS NOT NULL AND Pmid <> ''
+        WHERE "{pmid_column}" IS NOT NULL AND CAST("{pmid_column}" AS VARCHAR) <> ''
         """
     ).fetchall()
-    return {str(pmid): str(key) for pmid, key in rows}
+    return {normalise_pmid(pmid): str(key) for pmid, key in rows}
+
+
+def normalise_pmid(value: object) -> str:
+    """PMIDs appear as bare digits, ints, or full PubMed URLs depending on source."""
+    text = str(value).strip()
+    if "/" in text:
+        text = text.rstrip("/").rsplit("/", 1)[-1]
+    return text.lstrip("0") or text
 
 
 def load_neuro_ids(questions_path: Path | None) -> set[str] | None:
@@ -53,6 +61,8 @@ def main() -> int:
     parser.add_argument("--queries", required=True, type=Path, help="bioasq-full/queries.jsonl")
     parser.add_argument("--articles", required=True, help="Glob for articles-part-*.parquet")
     parser.add_argument("--out", required=True, type=Path, help="Destination qrels.jsonl")
+    parser.add_argument("--pmid-column", default="Pmid", help="PMID column name. Use 'pmid' for the OpenAlex abstracts dataset.")
+    parser.add_argument("--key-column", default="ArticleKey", help="Document key column. Use 'openalex_id' for the OpenAlex abstracts dataset.")
     parser.add_argument(
         "--neuroscience-questions",
         type=Path,
@@ -62,7 +72,7 @@ def main() -> int:
     args = parser.parse_args()
 
     queries = load_queries(args.queries)
-    pmid_to_key = load_index_pmids(args.articles)
+    pmid_to_key = load_index_pmids(args.articles, args.pmid_column, args.key_column)
     neuro_ids = load_neuro_ids(args.neuroscience_questions)
 
     kept: list[dict] = []
@@ -76,7 +86,7 @@ def main() -> int:
             dropped_not_neuro += 1
             continue
 
-        gold_pmids = [str(p) for p in query.get("pmids") or []]
+        gold_pmids = [normalise_pmid(p) for p in query.get("pmids") or []]
         total_gold += len(gold_pmids)
 
         present = {p: pmid_to_key[p] for p in gold_pmids if p in pmid_to_key}
