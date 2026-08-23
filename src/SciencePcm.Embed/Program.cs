@@ -115,6 +115,9 @@ internal static class Program
         }
 
         Console.WriteLine($"workers={options.Workers}  intra-threads={options.IntraOpThreads}  batch={options.BatchSize}");
+
+        ReportTokenLengths(options, sample);
+
         Console.WriteLine("Warming up ...");
 
         var embedders = CreateEmbedders(options, out var dimensions);
@@ -173,6 +176,37 @@ internal static class Program
         }
 
         return 0;
+    }
+
+    /// <summary>
+    /// Cost scales with tokens, not documents, so the truncation limit should be chosen
+    /// from the real length distribution rather than guessed.
+    /// </summary>
+    private static void ReportTokenLengths(Options options, List<string> sample)
+    {
+        var tokenizer = TokenizerFactory.Create(
+            options.ModelDirectory, options.Tokenizer, options.MaxTokens, options.LowerCase);
+
+        var lengths = new int[sample.Count];
+        Parallel.For(0, sample.Count, i => lengths[i] = tokenizer.Encode(sample[i]).Length);
+        Array.Sort(lengths);
+
+        int Percentile(double p) => lengths[Math.Clamp((int)(p * lengths.Length), 0, lengths.Length - 1)];
+
+        Console.WriteLine();
+        Console.WriteLine($"token lengths (truncated at --max-tokens {options.MaxTokens}):");
+        Console.WriteLine($"  mean {lengths.Average():F0}   p50 {Percentile(0.50)}   p90 {Percentile(0.90)}   " +
+                          $"p95 {Percentile(0.95)}   p99 {Percentile(0.99)}   max {lengths[^1]}");
+
+        foreach (var limit in new[] { 128, 192, 256, 384, 512 })
+        {
+            var cost = lengths.Sum(l => (long)Math.Min(l, limit));
+            var full = lengths.Sum(l => (long)l);
+            var truncated = lengths.Count(l => l > limit);
+            Console.WriteLine($"  --max-tokens {limit,3}: {100.0 * cost / full,5:F1}% of compute, " +
+                              $"{100.0 * truncated / lengths.Length,5:F1}% of texts truncated");
+        }
+        Console.WriteLine();
     }
 
     private static async Task<int> EmbedAsync(Options options)
