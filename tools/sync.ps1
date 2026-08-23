@@ -63,10 +63,25 @@ Write-Step 'Checking prerequisites'
 if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
     throw 'dotnet was not found on PATH.'
 }
+
 if (-not (Test-Path $Python)) {
-    throw "Python not found at $Python. Create it with: uv venv <path> --python 3.12"
+    Write-Host "  python venv missing at $Python" -ForegroundColor Yellow
+    if ($CheckOnly) {
+        Write-Host '  would create it (re-run without -CheckOnly)'
+    }
+    else {
+        if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
+            throw "No venv at $Python and uv is not installed. Install uv, or pass -Python <path>."
+        }
+        $venvRoot = Split-Path -Parent (Split-Path -Parent $Python)
+        Write-Host "  creating venv at $venvRoot ..."
+        & uv venv $venvRoot --python 3.12
+        Assert-LastExit 'uv venv'
+        & uv pip install --python $Python -r (Join-Path $repo 'eval\requirements.txt')
+        Assert-LastExit 'uv pip install requirements'
+    }
 }
-if (-not $env:legopds_clienthash -and -not $env:CLOUDPDS_CLIENT_HASH) {
+if ((Test-Path $Python) -and -not $env:legopds_clienthash -and -not $env:CLOUDPDS_CLIENT_HASH) {
     throw 'Set legopds_clienthash (or CLOUDPDS_CLIENT_HASH) before syncing.'
 }
 
@@ -93,16 +108,21 @@ if ($missing.Count -eq $corpora.Count) {
 }
 
 Write-Host '  RemoteBlobStore ... ' -NoNewline
-& $Python -c "import RemoteBlobStore" 2>$null
-if ($LASTEXITCODE -ne 0) {
-    Write-Host 'not installed, installing' -ForegroundColor Yellow
-    if (-not $CheckOnly) {
-        & $Python -m pip install --quiet "git+https://github.com/markusmobius/newsprinceton-pythoncloud"
-        Assert-LastExit 'pip install RemoteBlobStore'
-    }
+if (-not (Test-Path $Python)) {
+    Write-Host 'skipped (no venv yet)'
 }
 else {
-    Write-Host 'ok'
+    & $Python -c "import RemoteBlobStore" 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host 'not installed, installing' -ForegroundColor Yellow
+        if (-not $CheckOnly) {
+            & $Python -m pip install --quiet "git+https://github.com/markusmobius/newsprinceton-pythoncloud"
+            Assert-LastExit 'pip install RemoteBlobStore'
+        }
+    }
+    else {
+        Write-Host 'ok'
+    }
 }
 
 $report = Join-Path $passages 'ingest-report.json'
@@ -156,6 +176,11 @@ else {
 }
 
 Write-Step 'Sync'
+
+if (-not (Test-Path $Python)) {
+    Write-Host '  skipped: no python venv (re-run without -CheckOnly to create it)'
+    return
+}
 
 $syncArguments = @((Join-Path $PSScriptRoot 'sync.py'))
 if ($CheckOnly) { $syncArguments += '--check' }
