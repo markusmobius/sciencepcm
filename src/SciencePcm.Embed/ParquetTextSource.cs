@@ -1,5 +1,6 @@
 using Parquet;
 using Parquet.Serialization;
+using Parquet.Serialization.Attributes;
 
 namespace SciencePcm.Embed;
 
@@ -20,18 +21,22 @@ public enum CorpusSchema
 /// </summary>
 public static class ParquetTextSource
 {
+    // Nullability must mirror the file's definition levels exactly or Parquet.Net throws.
     private sealed class AbstractRow
     {
-        public string? openalex_id { get; set; }
+        [ParquetRequired]
+        public string openalex_id { get; set; } = "";
         public string? title { get; set; }
         public string? @abstract { get; set; }
     }
 
     private sealed class ChunkTextRow
     {
-        public string? ChunkId { get; set; }
+        [ParquetRequired]
+        public string ChunkId { get; set; } = "";
         public string? Title { get; set; }
-        public string? Text { get; set; }
+        [ParquetRequired]
+        public string Text { get; set; } = "";
     }
 
     public static IEnumerable<string> ExpandGlob(string glob)
