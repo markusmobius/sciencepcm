@@ -27,7 +27,7 @@
 [CmdletBinding()]
 param(
     [string]$Root = 'D:\SciencePCM',
-    [string]$Python = 'D:\SciencePCM\mcpserver\venvs\eval\Scripts\python.exe',
+    [string]$Python = 'D:\SciencePCM\mcpserver\venvs\sync\Scripts\python.exe',
     [int]$YearMin = 2019,
     [int]$YearMax = 2025,
     [int]$Threads = 256,
@@ -77,8 +77,6 @@ if (-not (Test-Path $Python)) {
         Write-Host "  creating venv at $venvRoot ..."
         & uv venv $venvRoot --python 3.12
         Assert-LastExit 'uv venv'
-        & uv pip install --python $Python -r (Join-Path $repo 'eval\requirements.txt')
-        Assert-LastExit 'uv pip install requirements'
     }
 }
 if ((Test-Path $Python) -and -not $env:legopds_clienthash -and -not $env:CLOUDPDS_CLIENT_HASH) {
