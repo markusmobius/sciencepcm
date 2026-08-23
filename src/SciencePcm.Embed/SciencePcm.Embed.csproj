@@ -6,7 +6,8 @@
 
   <ItemGroup>
     <PackageReference Include="FastBertTokenizer" Version="1.0.28" />
-    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.29.0" />
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.29.0" Condition="'$(UseGpu)' != 'true'" />
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.Gpu" Version="1.29.0" Condition="'$(UseGpu)' == 'true'" />
     <PackageReference Include="Microsoft.ML.Tokenizers" Version="2.0.0" />
     <PackageReference Include="Parquet.Net" Version="6.1.0" />
   </ItemGroup>
@@ -16,6 +17,11 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <!-- Build with: dotnet build -c Release -p:UseGpu=true -->
+  <PropertyGroup Condition="'$(UseGpu)' == 'true'">
+    <DefineConstants>$(DefineConstants);USE_GPU</DefineConstants>
   </PropertyGroup>
 
 </Project>

@@ -77,7 +77,7 @@ public sealed class TextEmbedder : IDisposable
     /// Run() is thread-safe, so one session can back many workers. Creating a session per
     /// worker duplicates the weights, which wrecks cache locality and NUMA placement.
     /// </summary>
-    public static InferenceSession CreateSession(string modelDirectory, int intraOpThreads)
+    public static InferenceSession CreateSession(string modelDirectory, int intraOpThreads, bool useGpu = false, int deviceId = 0)
     {
         var modelPath = File.Exists(modelDirectory) ? modelDirectory : ResolveModelPath(modelDirectory);
 
@@ -89,8 +89,20 @@ public sealed class TextEmbedder : IDisposable
             GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL,
         };
 
-        // Spin-waiting threads fight each other when many sessions share a socket.
-        sessionOptions.AddSessionConfigEntry("session.intra_op.allow_spinning", "0");
+        if (useGpu)
+        {
+#if USE_GPU
+            sessionOptions.AppendExecutionProvider_CUDA(deviceId);
+#else
+            throw new NotSupportedException(
+                "CUDA support is not compiled in. Rebuild with: dotnet build -c Release -p:UseGpu=true");
+#endif
+        }
+        else
+        {
+            // Spin-waiting threads fight each other when many sessions share a socket.
+            sessionOptions.AddSessionConfigEntry("session.intra_op.allow_spinning", "0");
+        }
 
         return new InferenceSession(modelPath, sessionOptions);
     }

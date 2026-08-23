@@ -388,7 +388,8 @@ internal static class Program
         _sessions = new Microsoft.ML.OnnxRuntime.InferenceSession[sessionCount];
         for (var i = 0; i < sessionCount; i++)
         {
-            _sessions[i] = TextEmbedder.CreateSession(options.ModelDirectory, options.IntraOpThreads);
+            _sessions[i] = TextEmbedder.CreateSession(
+                options.ModelDirectory, options.IntraOpThreads, options.Gpu, options.GpuDevice);
         }
 
         var embedders = new TextEmbedder[options.Workers];
@@ -397,7 +398,8 @@ internal static class Program
             embedders[i] = new TextEmbedder(embedderOptions, _sessions[i % sessionCount]);
         }
 
-        Console.WriteLine($"sessions={sessionCount} (shared across {options.Workers} workers)");
+        Console.WriteLine($"sessions={sessionCount} (shared across {options.Workers} workers)"
+                          + (options.Gpu ? $"  provider=CUDA:{options.GpuDevice}" : "  provider=CPU"));
         dimensions = embedders[0].Dimensions;
         return embedders;
     }
@@ -469,6 +471,10 @@ internal sealed class Options
           --benchmark            Measure throughput and project full-corpus time.
           --benchmark-texts <n>  Sample size for --benchmark. Default: 5000
 
+        GPU (requires: dotnet build -c Release -p:UseGpu=true):
+          --gpu                  Use the CUDA execution provider.
+          --gpu-device <n>       CUDA device index. Default: 0
+
         Validation:
           --verify-tokenizer <tokenizer-parity.json>
                                  Compare C# tokenisation against the Python export.
@@ -494,6 +500,8 @@ internal sealed class Options
     public bool SortBatches { get; private set; } = true;
     public int? Limit { get; private set; }
     public bool Benchmark { get; private set; }
+    public bool Gpu { get; private set; }
+    public int GpuDevice { get; private set; }
     public int BenchmarkTexts { get; private set; } = 5_000;
     public string? VerifyTokenizer { get; private set; }
 
@@ -552,6 +560,8 @@ internal sealed class Options
                 case "--no-sort": options.SortBatches = false; break;
                 case "--limit": options.Limit = int.Parse(Next()); break;
                 case "--benchmark": options.Benchmark = true; break;
+                case "--gpu": options.Gpu = true; break;
+                case "--gpu-device": options.GpuDevice = int.Parse(Next()); break;
                 case "--benchmark-texts": options.BenchmarkTexts = int.Parse(Next()); break;
                 case "--verify-tokenizer": options.VerifyTokenizer = Next(); break;
                 default: throw new ArgumentException($"Unrecognised argument '{flag}'.");
