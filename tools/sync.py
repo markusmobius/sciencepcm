@@ -53,12 +53,6 @@ MANIFEST = [
         "BioASQ + v0.2 evaluation questions",
     ),
     Entry(
-        TEMP / "models",
-        "sciencepcm/models",
-        "exported MedCPT ONNX; only needed if HuggingFace is unreachable from the A100 box",
-        optional=True,
-    ),
-    Entry(
         NERDS21 / "dataset" / "OpenAlex-neuroscience" / "data",
         "sciencepcm/openalex-works",
         "19 GB of full OpenAlex records; only needed for metadata beyond the abstracts projection",

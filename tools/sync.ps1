@@ -46,7 +46,6 @@ $dataset = Join-Path $Root 'dataset'
 # Everything derived lives under __temp: disposable, and rebuilt here when missing.
 $temp = Join-Path $Root 'mcpserver\__temp'
 $passages = Join-Path $temp 'passages-2019-2025'
-$models = Join-Path $temp 'models'
 
 function Write-Step($text) {
     Write-Host ''
@@ -155,14 +154,6 @@ else {
         throw "Ingest produced no report at $report. Refusing to sync."
     }
 }
-
-Write-Step 'Models'
-
-Write-Host '  Not synced by default. Inference runs on the A100 box, so export them there:'
-Write-Host '    python eval/export_onnx.py --out <dir>'
-Write-Host '  If HuggingFace turns out to be blocked there, put an export in'
-Write-Host "    $models"
-Write-Host '  and re-run with -IncludeOptional.'
 
 Write-Step 'Sync'
 
