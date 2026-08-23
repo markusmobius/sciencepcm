@@ -24,6 +24,9 @@ from artifacts import DEFAULT_SERVER, client_hash  # noqa: E402
 
 NERDS21 = Path(r"\\nerds21\sciencepcm")
 
+# Anything under __temp is derived and disposable; sync.ps1 rebuilds what is missing.
+TEMP = NERDS21 / "mcpserver" / "__temp"
+
 
 class Entry:
     def __init__(self, local: Path, cloud: str, why: str, optional: bool = False):
@@ -40,7 +43,7 @@ MANIFEST = [
         "5.3M abstracts - the retrieval benchmark tier",
     ),
     Entry(
-        NERDS21 / "mcpserver" / "data" / "passages-2019-2025",
+        TEMP / "passages-2019-2025",
         "sciencepcm/passages-2019-2025",
         "REGENERABLE ONLY ON NERDS21 - needs the 62.8 GB of PMC/bioRxiv/medRxiv XML",
     ),
@@ -50,14 +53,9 @@ MANIFEST = [
         "BioASQ + v0.2 evaluation questions",
     ),
     Entry(
-        NERDS21 / "mcpserver" / "models",
+        TEMP / "models",
         "sciencepcm/models",
         "exported MedCPT ONNX + vocab + tokenizer parity probes",
-    ),
-    Entry(
-        NERDS21 / "mcpserver" / "eval",
-        "sciencepcm/eval",
-        "qrels and the BM25 baseline results",
     ),
     Entry(
         NERDS21 / "dataset" / "OpenAlex-neuroscience" / "data",

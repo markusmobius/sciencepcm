@@ -42,7 +42,11 @@ Set-StrictMode -Version Latest
 
 $repo = Split-Path -Parent $PSScriptRoot
 $dataset = Join-Path $Root 'dataset'
-$passages = Join-Path $Root 'mcpserver\data\passages-2019-2025'
+
+# Everything derived lives under __temp: disposable, and rebuilt here when missing.
+$temp = Join-Path $Root 'mcpserver\__temp'
+$passages = Join-Path $temp 'passages-2019-2025'
+$models = Join-Path $temp 'models'
 
 function Write-Step($text) {
     Write-Host ''
@@ -152,6 +156,20 @@ else {
     }
 }
 
+Write-Step 'Models'
+
+if (Test-Path (Join-Path $models 'medcpt-article\model.onnx')) {
+    Write-Host '  present in __temp'
+}
+else {
+    Write-Host '  NOT present in __temp.' -ForegroundColor Yellow
+    Write-Host '  Either move an existing export in:'
+    Write-Host "    Move-Item '$(Join-Path $Root 'mcpserver\models')' '$models'"
+    Write-Host '  or export them on the A100 box instead:'
+    Write-Host "    python eval\export_onnx.py --out <dir>"
+    Write-Host '  The sync will simply skip them.'
+}
+
 Write-Step 'Sync'
 
 $syncArguments = @((Join-Path $PSScriptRoot 'sync.py'))
@@ -175,8 +193,8 @@ finally {
 
 Write-Step 'Done'
 if (-not $CheckOnly) {
-    Write-Host '  Once every entry above reports "all files present", these are safe to delete:'
-    Write-Host "    $passages"
-    Write-Host "    $(Join-Path $Root 'mcpserver\logs')"
-    Write-Host '  Keep mcpserver\repo and mcpserver\venvs so this script can run again.'
+    Write-Host '  Once every entry above reports "all files present", __temp is disposable:'
+    Write-Host "    Remove-Item -Recurse -Force '$temp'"
+    Write-Host '  Re-running this script rebuilds whatever is missing.'
+    Write-Host '  Keep mcpserver\repo and mcpserver\venvs.'
 }
