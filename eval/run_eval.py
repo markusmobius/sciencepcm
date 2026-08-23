@@ -31,7 +31,16 @@ class Retriever(ABC):
 
 
 class DuckDbBm25Retriever(Retriever):
-    def __init__(self, chunks_glob: str, database: Path, rebuild: bool = False) -> None:
+    def __init__(
+        self,
+        docs_glob: str,
+        database: Path,
+        rebuild: bool = False,
+        id_column: str = "ChunkId",
+        key_column: str = "ArticleKey",
+        text_column: str = "Text",
+        title_column: str | None = "Title",
+    ) -> None:
         fresh = rebuild or not database.exists()
         if rebuild and database.exists():
             database.unlink()
@@ -40,29 +49,43 @@ class DuckDbBm25Retriever(Retriever):
         self.connection.execute("INSTALL fts; LOAD fts;")
 
         if fresh:
-            print(f"Building BM25 index from {chunks_glob} ...")
+            print(f"Building BM25 index from {docs_glob} ...")
             started = time.perf_counter()
+
+            # Titles carry heavy retrieval signal, so they are indexed alongside the body.
+            body = (
+                f'COALESCE(CAST("{title_column}" AS VARCHAR), \'\') || \' \' || COALESCE(CAST("{text_column}" AS VARCHAR), \'\')'
+                if title_column
+                else f'CAST("{text_column}" AS VARCHAR)'
+            )
+
             self.connection.execute(
-                f"CREATE TABLE chunks AS SELECT ChunkId, ArticleKey, Text FROM read_parquet('{chunks_glob}')"
+                f"""
+                CREATE TABLE docs AS
+                SELECT CAST("{id_column}" AS VARCHAR) AS DocId,
+                       CAST("{key_column}" AS VARCHAR) AS DocKey,
+                       {body} AS Body
+                FROM read_parquet('{docs_glob}')
+                WHERE "{text_column}" IS NOT NULL
+                """
             )
             self.connection.execute(
-                "PRAGMA create_fts_index('chunks', 'ChunkId', 'Text', stemmer='porter', "
+                "PRAGMA create_fts_index('docs', 'DocId', 'Body', stemmer='porter', "
                 "stopwords='english', overwrite=1)"
             )
-            rows = self.connection.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
-            print(f"  indexed {rows:,} chunks in {time.perf_counter() - started:.1f}s")
+            rows = self.connection.execute("SELECT COUNT(*) FROM docs").fetchone()[0]
+            print(f"  indexed {rows:,} documents in {time.perf_counter() - started:.1f}s")
 
     def search(self, query: str, k: int) -> list[str]:
-        # Over-fetch passages so that collapsing to articles still fills k slots.
         rows = self.connection.execute(
             """
-            SELECT ArticleKey, MAX(score) AS best
+            SELECT DocKey, MAX(score) AS best
             FROM (
-                SELECT ArticleKey, fts_main_chunks.match_bm25(ChunkId, ?) AS score
-                FROM chunks
-            )
-            WHERE best IS NOT NULL
-            GROUP BY ArticleKey
+                SELECT DocKey, fts_main_docs.match_bm25(DocId, ?) AS score
+                FROM docs
+            ) scored
+            WHERE score IS NOT NULL
+            GROUP BY DocKey
             ORDER BY best DESC
             LIMIT ?
             """,
@@ -97,7 +120,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--qrels", required=True, type=Path)
     parser.add_argument("--retriever", choices=["duckdb-bm25", "http"], default="duckdb-bm25")
-    parser.add_argument("--chunks", help="Glob for chunks-part-*.parquet (duckdb-bm25)")
+    parser.add_argument("--chunks", help="Glob for the document Parquet (duckdb-bm25)")
+    parser.add_argument("--id-column", default="ChunkId")
+    parser.add_argument("--key-column", default="ArticleKey")
+    parser.add_argument("--text-column", default="Text")
+    parser.add_argument("--title-column", default="Title", help="Set empty to skip title indexing.")
     parser.add_argument("--database", type=Path, default=Path("bm25.duckdb"))
     parser.add_argument("--rebuild", action="store_true")
     parser.add_argument("--endpoint", help="MCP search URL (http)")
@@ -110,8 +137,16 @@ def main() -> int:
     if args.retriever == "duckdb-bm25":
         if not args.chunks:
             parser.error("--chunks is required for duckdb-bm25")
-        retriever: Retriever = DuckDbBm25Retriever(args.chunks, args.database, args.rebuild)
-        name = "duckdb-bm25"
+        retriever: Retriever = DuckDbBm25Retriever(
+            args.chunks,
+            args.database,
+            args.rebuild,
+            id_column=args.id_column,
+            key_column=args.key_column,
+            text_column=args.text_column,
+            title_column=args.title_column or None,
+        )
+        name = f"duckdb-bm25:{args.text_column}"
     else:
         if not args.endpoint:
             parser.error("--endpoint is required for http")
