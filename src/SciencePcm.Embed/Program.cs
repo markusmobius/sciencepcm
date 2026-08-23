@@ -161,7 +161,9 @@ internal static class Program
             Console.WriteLine($"throughput      : {perSecond:N0} texts/s");
             Console.WriteLine($"padded tokens/s : {tokensPerSecond:N0}");
             Console.WriteLine($"avg padded len  : {(double)paddedTokens / sample.Count:F0} tokens/text");
-            Console.WriteLine($"total threads   : {options.Workers * options.IntraOpThreads}");
+            Console.WriteLine($"session threads : {Math.Clamp(options.Sessions, 1, options.Workers) * options.IntraOpThreads}"
+                              + $"  ({Math.Clamp(options.Sessions, 1, options.Workers)} session(s) x {options.IntraOpThreads} intra-op)");
+            Console.WriteLine($"worker threads  : {options.Workers}");
             Console.WriteLine();
             foreach (var corpus in new[] { 5_298_493L, 6_028_782L })
             {
