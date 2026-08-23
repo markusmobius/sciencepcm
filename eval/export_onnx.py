@@ -74,9 +74,9 @@ def export(model_id: str, destination: Path, max_tokens: int, opset: int) -> Non
 
     encoded = tokenizer(
         PROBE_TEXTS[:2],
-        padding=True,
+        padding="max_length",
         truncation=True,
-        max_length=max_tokens,
+        max_length=64,
         return_tensors="pt",
     )
     args = (encoded["input_ids"], encoded["attention_mask"], encoded["token_type_ids"])
@@ -103,17 +103,35 @@ def export(model_id: str, destination: Path, max_tokens: int, opset: int) -> Non
         )
 
     tokenizer.save_pretrained(destination)
-    if not (destination / "vocab.txt").exists():
-        raise RuntimeError(f"vocab.txt not written to {destination}; the C# tokenizer needs it.")
+    write_vocab(tokenizer, destination)
+
+    # Deliberately a different batch size and sequence length from the export sample:
+    # TorchScript tracing can bake shapes in as constants, and reusing the export
+    # inputs would hide exactly that failure.
+    verify = tokenizer(
+        PROBE_TEXTS,
+        padding=True,
+        truncation=True,
+        max_length=max_tokens,
+        return_tensors="pt",
+    )
+    verify_args = (verify["input_ids"], verify["attention_mask"], verify["token_type_ids"])
+    print(f"  export shape {tuple(args[0].shape)} -> verify shape {tuple(verify_args[0].shape)}")
 
     with torch.no_grad():
-        reference = wrapper(*args).numpy()
+        reference = wrapper(*verify_args).numpy()
 
     session = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
     actual = session.run(
         [OUTPUT_NAME],
-        {name: args[i].numpy() for i, name in enumerate(INPUT_NAMES)},
+        {name: verify_args[i].numpy() for i, name in enumerate(INPUT_NAMES)},
     )[0]
+
+    if reference.shape != actual.shape:
+        raise RuntimeError(
+            f"ONNX output shape {actual.shape} != PyTorch {reference.shape}; "
+            "dynamic axes did not survive the export."
+        )
 
     drift = float(np.abs(reference - actual).max())
     print(f"  torch vs onnxruntime max abs diff: {drift:.2e}")
@@ -122,6 +140,22 @@ def export(model_id: str, destination: Path, max_tokens: int, opset: int) -> Non
 
     size_mb = onnx_path.stat().st_size / 1024 / 1024
     print(f"  wrote: model.onnx ({size_mb:,.0f} MB), vocab.txt")
+
+
+def write_vocab(tokenizer, destination: Path) -> None:
+    """Fast tokenizers persist tokenizer.json, but the C# side needs a plain vocab.txt."""
+    path = destination / "vocab.txt"
+    if path.exists():
+        return
+
+    vocab = tokenizer.get_vocab()
+    ordered = sorted(vocab.items(), key=lambda kv: kv[1])
+    if ordered[0][1] != 0 or ordered[-1][1] != len(ordered) - 1:
+        raise RuntimeError("Tokenizer vocabulary ids are not a contiguous range starting at 0.")
+
+    with path.open("w", encoding="utf-8", newline="\n") as stream:
+        for token, _ in ordered:
+            stream.write(token + "\n")
 
 
 def write_parity(model_id: str, destination: Path, max_tokens: int) -> None:
