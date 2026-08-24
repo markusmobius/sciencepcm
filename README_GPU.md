@@ -180,8 +180,15 @@ dotnet run --project src/SciencePcm.Embed -c Release -p:UseGpu=true -- \
 ```
 
 On GPU the tuning knobs invert compared with CPU: `--intra-threads` stops mattering,
-batch size matters much more (try 256, 512, 1024), and a handful of workers is enough
-to keep the device fed while the CPU tokenises.
+batch size matters much more, and a handful of workers is enough to keep the device fed
+while the CPU tokenises.
+
+**`--batch 256` with `--workers 4` is the validated setting: 953 texts/s, 1.3% padding
+waste.** Do not raise the batch much beyond that. Attention memory is quadratic in
+sequence length, so at batch 1024 and 512 tokens a single attention tensor is
+`1024 x 12 heads x 512 x 512 x 4 bytes` = 12 GB, and four concurrent workers exhaust
+even an 80 GB card. It fails partway through, once length-sorted batches reach the
+long tail.
 
 For reference, CPU on nerds21 (338 cores) managed 35 texts/s.
 
