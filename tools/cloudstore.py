@@ -29,7 +29,7 @@ import sys
 import tarfile
 from pathlib import Path
 
-DEFAULT_SERVER = "https://www.legopds.projectratio.net:6008"
+DEFAULT_SERVER = os.getenv("CLOUDPDS_SERVER_URL", "https://www.legopds.projectratio.net:6008")
 
 NERDS21 = Path(r"\\nerds21\sciencepcm")
 
@@ -304,10 +304,18 @@ def cmd_list(args) -> int:
 
 
 def cmd_push(args) -> int:
+    stages_json = None
+
+    # The machine starts a background server, so it must not be held open across the
+    # multi-minute packing step or the connection is stale by upload time. The proven
+    # pattern (legonews-python run_pipeline_us.py) is one short-lived machine per
+    # cloud operation; __temp is untouched by construction and disposal, so the
+    # packed file survives between them.
     machine = open_machine(args)
     try:
         stages = build_stages(args.report, args.code_version or git_version())
-        print(f"stages: {machine.getConfigJson(stages)}")
+        stages_json = machine.getConfigJson(stages)
+        print(f"stages: {stages_json}")
 
         existing = machine.loadVersion(cloudPath=args.cloud, stages=stages, debug=args.debug)
         if existing and not args.force:
@@ -316,16 +324,25 @@ def cmd_push(args) -> int:
 
         # saveVersion requires the temp file's basename to equal the config hash.
         temp = machine.getTempFile(stages)
-        source = Path(args.local)
+    finally:
+        machine.Dispose()
 
+    source = Path(args.local)
+    if not Path(temp).exists() or args.force:
         print(f"Packing {source} -> {temp}")
         mode = "w:gz" if args.compress else "w"
         with tarfile.open(temp, mode) as archive:
             for item in sorted(source.rglob("*")):
                 if item.is_file():
                     archive.add(item, arcname=str(item.relative_to(source)))
+    else:
+        print(f"Reusing packed artifact at {temp}")
 
-        size_gb = Path(temp).stat().st_size / 1024**3
+    size_gb = Path(temp).stat().st_size / 1024**3
+
+    machine = open_machine(args)
+    try:
+        stages = build_stages(args.report, args.code_version or git_version())
         print(f"Uploading {size_gb:,.2f} GB to {args.cloud}")
         machine.saveVersion(
             tempFileName=temp,
@@ -365,7 +382,11 @@ def cmd_pull(args) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--server", default=os.getenv("CLOUDPDS_SERVER", DEFAULT_SERVER))
-    parser.add_argument("--cache", type=Path, default=Path(os.getenv("CLOUDPDS_CACHE", ".artifact-cache")))
+    parser.add_argument(
+        "--cache",
+        type=Path,
+        default=Path(os.getenv("CLOUDPDS_CACHE_FOLDER", os.getenv("CLOUDPDS_CACHE", ".artifact-cache"))),
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     sync = sub.add_parser("sync", help="Upload the nerds21 manifest, skipping what is already there.")
