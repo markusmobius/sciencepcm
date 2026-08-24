@@ -94,7 +94,7 @@ libraries (see [gotchas](#gotchas)).
 | Build | `dotnet build -c Release -p:UseGpu=true`. |
 | Tokenizer parity | Verifies C# tokenisation matches Python. **Must be 6/6.** |
 
-Flags: `--check`, `--skip-pull`, `--skip-models`, `--skip-build`.
+Flags: `--check`, `--skip-pull`, `--force-pull`, `--skip-models`, `--skip-build`.
 
 Layout produced:
 
@@ -162,6 +162,40 @@ The script tests reachability before exporting models. If it fails, export on ne
 instead, put the result in `mcpserver\__temp\models`, and run
 `.\tools\nerds21-sync.ps1 -IncludeOptional` there — then re-run this script with
 `--skip-models` after pulling.
+
+---
+
+## Refreshing when new papers arrive
+
+Both idempotency checks compare **file names only**. A rebuilt corpus reuses the same
+shard filenames with different contents, so a plain re-run would report success and
+quietly keep the old data. Refreshing is therefore explicit:
+
+```powershell
+# nerds21 - re-ingests and re-uploads
+.\tools\nerds21-sync.ps1 -Force
+```
+
+```bash
+# here - ignores the .pulled-* markers
+bash tools/gcr-prep.sh --force-pull --skip-models --skip-build
+```
+
+Then **re-embed from scratch**. There is deliberately no incremental embedding: at
+~990 texts/s the whole corpus is about 1.5 h for abstracts and 1.8 h for passages, and
+tracking which ids already have vectors, merging shards and keeping the index mapping
+consistent would be far more machinery than three hours of GPU time is worth.
+
+What needs re-embedding depends on what changed:
+
+| Change | Re-embed |
+| --- | --- |
+| More full-text XML | passages only (~1.8 h) |
+| Abstracts Parquet regenerated | abstracts only (~1.5 h) |
+| Chunker settings changed | passages, and any evaluation tied to them |
+
+Changing chunk size or the section rules shifts every chunk id, which invalidates the
+whole passage tier rather than extending it.
 
 ---
 
