@@ -19,7 +19,8 @@ public sealed record EmbedderOptions(
     PoolingMode Pooling = PoolingMode.Cls,
     bool Normalize = true,
     bool LowerCase = true,
-    TokenizerKind Tokenizer = TokenizerKind.Fast);
+    TokenizerKind Tokenizer = TokenizerKind.Fast,
+    int PadMultiple = 64);
 
 /// <summary>
 /// One ONNX session plus tokenizer. Not thread-safe: create one per worker so that
@@ -136,6 +137,18 @@ public sealed class TextEmbedder : IDisposable
 
         // Pad only to the longest member of this batch, not to MaxTokens. Abstracts are
         // far shorter than 512 tokens, so this is most of the throughput.
+        //
+        // Round that up to a bucket: every distinct sequence length allocates its own GPU
+        // buffer, and over a long run the arena fragments until a large request fails even
+        // with free memory available. Bucketing costs a few percent of compute and keeps
+        // the number of distinct shapes in single digits.
+        if (_options.PadMultiple > 1)
+        {
+            longest = Math.Min(
+                _options.MaxTokens,
+                (longest + _options.PadMultiple - 1) / _options.PadMultiple * _options.PadMultiple);
+        }
+
         var ids = new DenseTensor<long>([batch, longest]);
         var mask = new DenseTensor<long>([batch, longest]);
         var types = _needsTokenTypeIds ? new DenseTensor<long>([batch, longest]) : null;

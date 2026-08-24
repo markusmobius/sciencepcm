@@ -95,7 +95,8 @@ internal static class Program
         options.Pooling,
         options.Normalize,
         options.LowerCase,
-        options.Tokenizer);
+        options.Tokenizer,
+        options.PadMultiple);
 
     private static async Task<int> BenchmarkAsync(Options options)
     {
@@ -495,6 +496,9 @@ internal sealed class Options
           --intra-threads <n>    Threads per session. Default: 8
           --batch <n>            Texts per forward pass. Default: 64
           --shard-size <n>       Vectors per output shard. Default: 250000
+          --pad-multiple <n>     Round padded sequence length up to a multiple of this.
+                                 Keeps the GPU allocator from fragmenting over a long run.
+                                 1 disables. Default: 64
           --sort-buffer <n>      Texts buffered and length-sorted before batching, which
                                  cuts padding waste. 0 disables. Default: 65536
           --no-sort              Disable length-sorted batching.
@@ -527,6 +531,7 @@ internal sealed class Options
     public int IntraOpThreads { get; private set; } = 8;
     public int BatchSize { get; private set; } = 64;
     public int ShardSize { get; private set; } = 250_000;
+    public int PadMultiple { get; private set; } = 64;
     public int SortBuffer { get; private set; } = 65_536;
     public bool SortBatches { get; private set; } = true;
     public int? Limit { get; private set; }
@@ -587,6 +592,7 @@ internal sealed class Options
                 case "--intra-threads": options.IntraOpThreads = int.Parse(Next()); break;
                 case "--batch": options.BatchSize = int.Parse(Next()); break;
                 case "--shard-size": options.ShardSize = int.Parse(Next()); break;
+                case "--pad-multiple": options.PadMultiple = int.Parse(Next()); break;
                 case "--sort-buffer": options.SortBuffer = int.Parse(Next()); break;
                 case "--no-sort": options.SortBatches = false; break;
                 case "--limit": options.Limit = int.Parse(Next()); break;
