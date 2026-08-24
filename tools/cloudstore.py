@@ -95,11 +95,14 @@ def open_cloud(args):
 def open_machine(args):
     from RemoteBlobStore.DataVersionMachine import DataVersionMachine
 
-    Path(args.cache).mkdir(parents=True, exist_ok=True)
+    # Must be absolute: saveVersion hands this path to RemoteBlobServer, which is a
+    # separate process and need not share our working directory.
+    cache = Path(args.cache).expanduser().resolve()
+    cache.mkdir(parents=True, exist_ok=True)
     return DataVersionMachine(
         clientHash=client_hash(),
         serverUrl=args.server,
-        cacheFolder=str(args.cache),
+        cacheFolder=str(cache),
     )
 
 
