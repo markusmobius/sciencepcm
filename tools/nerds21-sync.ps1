@@ -227,6 +227,8 @@ if (-not (Test-Path $Python)) {
 $syncArguments = @((Join-Path $PSScriptRoot 'cloudstore.py'), 'sync')
 if ($CheckOnly) { $syncArguments += '--check' }
 if ($IncludeOptional) { $syncArguments += '--include-optional' }
+# A rebuilt corpus reuses the shard filenames, so the name check would skip it.
+if ($Force) { $syncArguments += '--force' }
 
 # RemoteBlobServer parses its port from the first stdout line, but prints a MAXCORES
 # warning there first when the variable is set, which breaks startup. Cleared for the

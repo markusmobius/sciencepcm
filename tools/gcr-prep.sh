@@ -21,6 +21,7 @@ DOTNET_CHANNEL="10.0"
 
 CHECK_ONLY=0
 SKIP_PULL=0
+FORCE_PULL=0
 SKIP_MODELS=0
 SKIP_BUILD=0
 
@@ -28,6 +29,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --check)       CHECK_ONLY=1 ;;
         --skip-pull)   SKIP_PULL=1 ;;
+        --force-pull)  FORCE_PULL=1 ;;
         --skip-models) SKIP_MODELS=1 ;;
         --skip-build)  SKIP_BUILD=1 ;;
         -h|--help)     sed -n '2,12p' "${BASH_SOURCE[0]}"; exit 0 ;;
@@ -199,7 +201,7 @@ pull() {
     local cloud="$1" name="$2"
     local marker="$DATA_ROOT/.pulled-$name"
 
-    if [[ -f "$marker" ]]; then
+    if [[ -f "$marker" && $FORCE_PULL -eq 0 ]]; then
         info "$(printf '%-22s' "$name") already pulled ($(cat "$marker"))"
         return
     fi

@@ -223,10 +223,13 @@ def cmd_sync(args) -> int:
             remote = cloud_names(cloud, entry.cloud)
             if remote is None:
                 print("    cloud: directory does not exist")
+            elif args.force:
+                print(f"    cloud: {len(remote):,} files present, --force set")
             else:
                 outstanding = {f.name for f in files} - remote
                 if not outstanding:
                     print(f"    cloud: all {len(files):,} files present - skipping")
+                    print("           names only are compared; use --force after re-ingesting")
                     skipped += 1
                     continue
                 print(f"    cloud: {len(remote):,} files present, {len(outstanding):,} missing")
@@ -367,6 +370,12 @@ def main() -> int:
 
     sync = sub.add_parser("sync", help="Upload the nerds21 manifest, skipping what is already there.")
     sync.add_argument("--check", action="store_true", help="Report status, transfer nothing.")
+    sync.add_argument(
+        "--force",
+        action="store_true",
+        help="Re-upload even when the names all match. Needed after re-ingesting, because "
+        "a rebuilt corpus reuses the same shard filenames with different contents.",
+    )
     sync.add_argument("--include-optional", action="store_true")
     sync.add_argument("--only", action="append", help="Sync only these cloud paths. Repeatable.")
     sync.set_defaults(func=cmd_sync)
