@@ -128,6 +128,7 @@ make_venv lab  "requirements/lab.txt"
 SYNC_PY="$VENVS/sync/bin/python"
 EVAL_PY="$VENVS/eval/bin/python"
 LAB_PY="$VENVS/lab/bin/python"
+CUDA_PY="$VENVS/cuda12/bin/python"
 
 if [[ -x "$SYNC_PY" ]]; then
     if "$SYNC_PY" -c "import RemoteBlobStore" 2>/dev/null; then
@@ -139,6 +140,53 @@ if [[ -x "$SYNC_PY" ]]; then
         uv pip install --python "$SYNC_PY" \
             "git+https://github.com/markusmobius/newsprinceton-pythoncloud" >/dev/null
         info "RemoteBlobStore ready"
+    fi
+fi
+
+# ---------------------------------------------------------------- cuda
+
+step "CUDA runtime for ONNX Runtime"
+
+# ORT 1.29's CUDA provider links against CUDA 12 and cuDNN 9. Azure images ship
+# CUDA 13 and no cuDNN, so the matching userspace libraries are installed as pip
+# wheels instead. The driver is backward compatible, so this is safe.
+cuda_lib_path() {
+    [[ -x "$CUDA_PY" ]] || return 0
+    local site
+    site="$("$CUDA_PY" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])' 2>/dev/null)" || return 0
+    local paths=()
+    for dir in "$site"/nvidia/*/lib; do
+        [[ -d "$dir" ]] && paths+=("$dir")
+    done
+    (IFS=:; echo "${paths[*]}")
+}
+
+if [[ -x "$CUDA_PY" ]] && [[ -n "$(cuda_lib_path)" ]]; then
+    info "already installed"
+elif [[ $CHECK_ONLY -eq 1 ]]; then
+    warn "would install nvidia-cuda-runtime-cu12, nvidia-cublas-cu12, nvidia-cudnn-cu12"
+else
+    info "installing CUDA 12 + cuDNN 9 wheels ..."
+    uv venv "$VENVS/cuda12" --python 3.12 >/dev/null
+    uv pip install --python "$CUDA_PY" \
+        nvidia-cuda-runtime-cu12 nvidia-cublas-cu12 nvidia-cudnn-cu12 nvidia-cufft-cu12 >/dev/null
+    info "installed"
+fi
+
+CUDA_LIBS="$(cuda_lib_path)"
+if [[ -n "$CUDA_LIBS" ]]; then
+    export LD_LIBRARY_PATH="$CUDA_LIBS${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    info "LD_LIBRARY_PATH set for this run"
+
+    # Interactive shells need the same paths for manual dotnet runs.
+    if [[ $CHECK_ONLY -eq 0 ]]; then
+        cat > "$DATA_ROOT/env.sh" <<EOF
+# Source before running SciencePcm.Embed with --gpu:
+#   source $DATA_ROOT/env.sh
+export PATH="\$HOME/.dotnet:\$HOME/.local/bin:\$PATH"
+export LD_LIBRARY_PATH="$CUDA_LIBS\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
+EOF
+        info "wrote $DATA_ROOT/env.sh"
     fi
 fi
 
@@ -232,6 +280,9 @@ cat <<EOF
   corpus : $CORPUS
   models : $MODELS
   venvs  : $VENVS
+
+  New shells need the CUDA libraries on the path:
+    source $DATA_ROOT/env.sh
 
   Benchmark the GPU:
     dotnet run --project src/SciencePcm.Embed -c Release -p:UseGpu=true -- \\
