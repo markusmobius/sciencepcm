@@ -5,8 +5,8 @@
 # uploads it; this one provisions this machine and pulls it down. Idempotent -
 # every step checks before acting, so re-running costs little.
 #
-#   bash tools/prep_gcr.sh --check     report only
-#   bash tools/prep_gcr.sh             provision, pull, build, verify
+#   bash tools/gcr-prep.sh --check     report only
+#   bash tools/gcr-prep.sh             provision, pull, build, verify
 #
 # Requires legopds_clienthash (or CLOUDPDS_CLIENT_HASH) in the environment.
 
@@ -122,8 +122,8 @@ make_venv() {
 }
 
 make_venv sync ""
-make_venv eval "eval/requirements.txt"
-make_venv lab  "eval/requirements-lab.txt"
+make_venv eval "requirements/eval.txt"
+make_venv lab  "requirements/lab.txt"
 
 SYNC_PY="$VENVS/sync/bin/python"
 EVAL_PY="$VENVS/eval/bin/python"
@@ -165,7 +165,7 @@ pull() {
     fi
 
     info "$(printf '%-22s' "$name") pulling ..."
-    "$SYNC_PY" "$REPO/tools/artifacts.py" pull-dir --cloud "$cloud" --local "$DATA_ROOT"
+    "$SYNC_PY" "$REPO/tools/cloudstore.py" pull-dir --cloud "$cloud" --local "$DATA_ROOT"
     local count
     count="$(find "$CORPUS/$name" -type f 2>/dev/null | wc -l)"
     [[ "$count" -gt 0 ]] || die "Pull of $cloud produced no files."
@@ -195,7 +195,7 @@ else
     [[ "$hf_status" == "200" ]] || die "HuggingFace returned $hf_status. Sync the models from nerds21 with -IncludeOptional instead."
 
     info "exporting to ONNX (this downloads ~900 MB of weights) ..."
-    "$LAB_PY" "$REPO/eval/export_onnx.py" --out "$MODELS"
+    "$LAB_PY" "$REPO/tools/export_onnx.py" --out "$MODELS"
 fi
 
 # ---------------------------------------------------------------- build

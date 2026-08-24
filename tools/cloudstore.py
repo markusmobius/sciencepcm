@@ -1,20 +1,20 @@
-"""Move corpus and derived artifacts through RemoteBlobStore.
+"""All cloud transfer for this project, through RemoteBlobStore.
 
     pip install git+https://github.com/markusmobius/newsprinceton-pythoncloud
 
-Two layers, used for different things:
+Three levels, used for different things:
 
-  * CloudMachine (push-dir / pull-dir / list) does recursive directory transfer.
-    Used for raw inputs - Parquet corpora, exported models - where the content is
-    already immutable and needs no versioning.
+  sync                  Uploads the fixed set of directories nerds21 owns, skipping
+                        anything the cloud already has. Driven by MANIFEST below.
 
-  * DataVersionMachine (push / pull) keys a single file by a sha256 over the
-    pipeline Stage list. Used for derived artifacts - vectors, indexes - where the
-    thing that matters is *which configuration produced this*. Change the chunker or
-    the model and you get a different artifact instead of a silent overwrite.
+  push-dir / pull-dir   Plain recursive directory transfer, for anything not in the
+                        manifest.
 
-Because DataVersionMachine stores one file per version, vector directories are
-tarred on push and expanded on pull.
+  push / pull           Config-versioned single artifacts. Keyed by a sha256 over the
+                        pipeline Stage list, which is built from ingest-report.json and
+                        embed-report.json so the key cannot drift from what produced the
+                        data. Used for vectors and indexes, where serving the wrong
+                        version is silent rather than loud.
 
 Auth comes from CLOUDPDS_CLIENT_HASH or legopds_clienthash.
 """
@@ -27,10 +27,52 @@ import os
 import subprocess
 import sys
 import tarfile
-import tempfile
 from pathlib import Path
 
 DEFAULT_SERVER = "https://www.legopds.projectratio.net:6008"
+
+NERDS21 = Path(r"\\nerds21\sciencepcm")
+
+# Everything uploaded lives under __temp. Partly because it is all derived and
+# disposable, and partly because the uploader opens source files read-write to
+# fingerprint them, which fails on the read-only dataset directories.
+TEMP = NERDS21 / "mcpserver" / "__temp"
+
+
+class Entry:
+    def __init__(self, local: Path, cloud: str, why: str, optional: bool = False):
+        self.local = local
+        self.cloud = cloud
+        self.why = why
+        self.optional = optional
+
+
+MANIFEST = [
+    Entry(
+        TEMP / "abstracts",
+        "sciencepcm/abstracts",
+        "5.3M abstracts - the retrieval benchmark tier",
+    ),
+    Entry(
+        TEMP / "passages-2019-2025",
+        "sciencepcm/passages-2019-2025",
+        "REGENERABLE ONLY ON NERDS21 - needs the 62.8 GB of PMC/bioRxiv/medRxiv XML",
+    ),
+    Entry(
+        TEMP / "questions",
+        "sciencepcm/questions",
+        "BioASQ + v0.2 evaluation questions",
+    ),
+    Entry(
+        TEMP / "openalex-works",
+        "sciencepcm/openalex-works",
+        "19 GB of full OpenAlex records; only needed for metadata beyond the abstracts projection",
+        optional=True,
+    ),
+]
+
+
+# ----------------------------------------------------------------- plumbing
 
 
 def client_hash() -> str:
@@ -39,6 +81,61 @@ def client_hash() -> str:
         if value:
             return value
     raise SystemExit("Set CLOUDPDS_CLIENT_HASH (or legopds_clienthash) before using this tool.")
+
+
+def open_cloud(args):
+    from RemoteBlobStore.Remote.RemoteBlobServer import RemoteBlobServer
+    from RemoteBlobStore.Remote.Runners.CloudMachine import CloudMachine
+
+    server = RemoteBlobServer()
+    cloud = CloudMachine(port=server.port, clientHash=client_hash(), serverUrl=args.server)
+    return server, cloud
+
+
+def open_machine(args):
+    from RemoteBlobStore.DataVersionMachine import DataVersionMachine
+
+    Path(args.cache).mkdir(parents=True, exist_ok=True)
+    return DataVersionMachine(
+        clientHash=client_hash(),
+        serverUrl=args.server,
+        cacheFolder=str(args.cache),
+    )
+
+
+def tag_rules():
+    from RemoteBlobStore.Remote.Runners.UploadTask import BlobFilter, TagRule
+
+    return [
+        TagRule(
+            key="project",
+            value="sciencepcm",
+            kvFilter=BlobFilter(ftype="pattern", filterDefinition="*"),
+        )
+    ]
+
+
+def cloud_names(cloud, path: str) -> set[str] | None:
+    """File names present in a cloud directory, or None when it does not exist."""
+    status = cloud.Directory(cloudDirectory=path)
+    if status is None:
+        return None
+
+    files = getattr(status, "files", None)
+    if files is None and isinstance(status, dict):
+        files = status.get("files")
+    if files is None:
+        return set()
+
+    names = set()
+    for item in files:
+        if isinstance(item, str):
+            names.add(Path(item).name)
+        else:
+            value = getattr(item, "name", None) or getattr(item, "Name", None)
+            if value:
+                names.add(Path(str(value)).name)
+    return names
 
 
 def git_version(repo: Path | None = None) -> str:
@@ -98,43 +195,74 @@ def build_stages(report_paths: list[Path], code_version: str):
     return stages
 
 
-def open_machine(args):
-    from RemoteBlobStore.DataVersionMachine import DataVersionMachine
-
-    Path(args.cache).mkdir(parents=True, exist_ok=True)
-    return DataVersionMachine(
-        clientHash=client_hash(),
-        serverUrl=args.server,
-        cacheFolder=str(args.cache),
-    )
+# ----------------------------------------------------------------- commands
 
 
-def open_cloud(args):
-    from RemoteBlobStore.Remote.RemoteBlobServer import RemoteBlobServer
-    from RemoteBlobStore.Remote.Runners.CloudMachine import CloudMachine
+def cmd_sync(args) -> int:
+    entries = [e for e in MANIFEST if args.include_optional or not e.optional]
+    if args.only:
+        entries = [e for e in entries if e.cloud in args.only]
 
-    server = RemoteBlobServer()
-    cloud = CloudMachine(port=server.port, clientHash=client_hash(), serverUrl=args.server)
-    return server, cloud
+    server, cloud = open_cloud(args)
+    uploaded = skipped = missing = 0
+
+    try:
+        for entry in entries:
+            print(f"\n=== {entry.cloud}")
+            print(f"    {entry.why}")
+
+            if not entry.local.exists():
+                print(f"    MISSING LOCALLY: {entry.local}")
+                missing += 1
+                continue
+
+            files = sorted(p for p in entry.local.rglob("*") if p.is_file())
+            size_gb = sum(f.stat().st_size for f in files) / 1024**3
+            print(f"    local: {len(files):,} files, {size_gb:,.2f} GB")
+
+            remote = cloud_names(cloud, entry.cloud)
+            if remote is None:
+                print("    cloud: directory does not exist")
+            else:
+                outstanding = {f.name for f in files} - remote
+                if not outstanding:
+                    print(f"    cloud: all {len(files):,} files present - skipping")
+                    skipped += 1
+                    continue
+                print(f"    cloud: {len(remote):,} files present, {len(outstanding):,} missing")
+
+            if args.check:
+                print("    --check set, not uploading")
+                continue
+
+            print(f"    uploading {entry.local} ...")
+            cloud.Upload(
+                localDirectory=str(entry.local),
+                cloudDirectory=entry.cloud,
+                tagRules=tag_rules(),
+                publicRules=[],
+                recursiveUpload=True,
+            )
+            uploaded += 1
+            print("    done")
+    finally:
+        server.Dispose()
+
+    print(f"\nuploaded {uploaded}, already synced {skipped}, missing locally {missing}")
+    if missing:
+        print("Some sources were missing. Do not delete anything on nerds21 until that is resolved.")
+        return 1
+    return 0
 
 
 def cmd_push_dir(args) -> int:
-    from RemoteBlobStore.Remote.Runners.UploadTask import BlobFilter, TagRule
-
     server, cloud = open_cloud(args)
     try:
-        rules = [
-            TagRule(
-                key="project",
-                value="sciencepcm",
-                kvFilter=BlobFilter(ftype="pattern", filterDefinition="*"),
-            )
-        ]
         print(f"Uploading {args.local} -> {args.cloud}")
         cloud.Upload(
             localDirectory=str(args.local),
             cloudDirectory=args.cloud,
-            tagRules=rules,
+            tagRules=tag_rules(),
             publicRules=[],
             recursiveUpload=not args.flat,
         )
@@ -200,7 +328,7 @@ def cmd_push(args) -> int:
             tempFileName=temp,
             cloudPath=args.cloud,
             stages=stages,
-            logs=[{"tool": "artifacts.py", "source": str(source)} for _ in stages],
+            logs=[{"tool": "cloudstore.py", "source": str(source)} for _ in stages],
             debug=args.debug,
         )
         print("saved")
@@ -237,7 +365,13 @@ def main() -> int:
     parser.add_argument("--cache", type=Path, default=Path(os.getenv("CLOUDPDS_CACHE", ".artifact-cache")))
     sub = parser.add_subparsers(dest="command", required=True)
 
-    push_dir = sub.add_parser("push-dir", help="Recursive directory upload (corpus, models).")
+    sync = sub.add_parser("sync", help="Upload the nerds21 manifest, skipping what is already there.")
+    sync.add_argument("--check", action="store_true", help="Report status, transfer nothing.")
+    sync.add_argument("--include-optional", action="store_true")
+    sync.add_argument("--only", action="append", help="Sync only these cloud paths. Repeatable.")
+    sync.set_defaults(func=cmd_sync)
+
+    push_dir = sub.add_parser("push-dir", help="Recursive directory upload.")
     push_dir.add_argument("--local", type=Path, required=True)
     push_dir.add_argument("--cloud", required=True)
     push_dir.add_argument("--flat", action="store_true", help="Do not recurse.")
@@ -252,14 +386,14 @@ def main() -> int:
     listing.add_argument("--cloud", required=True)
     listing.set_defaults(func=cmd_list)
 
-    push = sub.add_parser("push", help="Config-versioned artifact upload (vectors, indexes).")
+    push = sub.add_parser("push", help="Config-versioned artifact upload.")
     push.add_argument("--local", type=Path, required=True, help="Directory to archive.")
-    push.add_argument("--cloud", required=True, help="Cloud directory holding the versions.")
+    push.add_argument("--cloud", required=True)
     push.add_argument("--report", type=Path, action="append", required=True,
                       help="ingest-report.json / embed-report.json. Repeatable, in pipeline order.")
     push.add_argument("--code-version", default=None, help="Defaults to the short git SHA.")
     push.add_argument("--compress", action="store_true", help="gzip the tar. Float vectors barely compress.")
-    push.add_argument("--force", action="store_true", help="Upload even if this version exists.")
+    push.add_argument("--force", action="store_true")
     push.add_argument("--debug", action="store_true", help="Local cache only, no network.")
     push.set_defaults(func=cmd_push)
 

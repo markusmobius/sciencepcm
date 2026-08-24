@@ -12,15 +12,15 @@
     sync skips any cloud directory that already holds every local file.
 
 .EXAMPLE
-    .\tools\sync.ps1 -CheckOnly
+    .\tools\nerds21-sync.ps1 -CheckOnly
     Reports what would be built and transferred, without doing either.
 
 .EXAMPLE
-    .\tools\sync.ps1
+    .\tools\nerds21-sync.ps1
     Builds if needed, then syncs.
 
 .EXAMPLE
-    .\tools\sync.ps1 -Force
+    .\tools\nerds21-sync.ps1 -Force
     Re-runs the ingest even if output already exists.
 #>
 
@@ -224,7 +224,7 @@ if (-not (Test-Path $Python)) {
     return
 }
 
-$syncArguments = @((Join-Path $PSScriptRoot 'sync.py'))
+$syncArguments = @((Join-Path $PSScriptRoot 'cloudstore.py'), 'sync')
 if ($CheckOnly) { $syncArguments += '--check' }
 if ($IncludeOptional) { $syncArguments += '--include-optional' }
 
@@ -240,12 +240,12 @@ if ($null -ne $savedMaxCores) {
 Push-Location $repo
 try {
     & $Python @syncArguments
-    Assert-LastExit 'sync.py'
+    Assert-LastExit 'cloudstore.py sync'
 
     if (-not $CheckOnly) {
         Write-Step 'Verifying'
-        & $Python (Join-Path $PSScriptRoot 'sync.py') --check
-        Assert-LastExit 'sync.py --check'
+        & $Python (Join-Path $PSScriptRoot 'cloudstore.py') sync --check
+        Assert-LastExit 'cloudstore.py sync --check'
     }
 }
 finally {
