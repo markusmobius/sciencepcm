@@ -118,8 +118,10 @@ Provisioning worked if all of these hold:
 - [ ] Tokenizer parity reports **6/6 probes matched**
 - [ ] `source ~/sciencepcm-data/env.sh` then a `--gpu` benchmark runs without a library error
 
-The tokenizer parity step is the canary — it is the first thing that actually loads
-the CUDA execution provider. If the GPU stack is broken, it fails there.
+Note that the parity check is **tokenizer-only** and never loads the ONNX model, so it
+proves nothing about CUDA. The build succeeding only proves the package resolved. The
+first thing that actually creates a CUDA session is the benchmark — if `LD_LIBRARY_PATH`
+or cuDNN are wrong, that is where it surfaces.
 
 ---
 
