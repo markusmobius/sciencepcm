@@ -169,7 +169,6 @@ def build_stages(report_paths: list[Path], code_version: str):
         if name == "embed":
             config = {
                 "model": report.get("model", {}),
-                "input": report.get("input"),
                 "schema": report.get("schema"),
                 "include_title": report.get("include_title"),
                 "dimensions": report.get("dimensions"),
