@@ -78,7 +78,12 @@ public sealed class TextEmbedder : IDisposable
     /// Run() is thread-safe, so one session can back many workers. Creating a session per
     /// worker duplicates the weights, which wrecks cache locality and NUMA placement.
     /// </summary>
-    public static InferenceSession CreateSession(string modelDirectory, int intraOpThreads, bool useGpu = false, int deviceId = 0)
+    public static InferenceSession CreateSession(
+        string modelDirectory,
+        int intraOpThreads,
+        bool useGpu = false,
+        int deviceId = 0,
+        long gpuMemLimitBytes = 0)
     {
         var modelPath = File.Exists(modelDirectory) ? modelDirectory : ResolveModelPath(modelDirectory);
 
@@ -93,7 +98,21 @@ public sealed class TextEmbedder : IDisposable
         if (useGpu)
         {
 #if USE_GPU
-            sessionOptions.AppendExecutionProvider_CUDA(deviceId);
+            // The arena grows greedily by default, so the first process on the card can
+            // starve everything else. kSameAsRequested also avoids the doubling that
+            // fragments memory over a long run.
+            var cudaOptions = new OrtCUDAProviderOptions();
+            var settings = new Dictionary<string, string>
+            {
+                ["device_id"] = deviceId.ToString(),
+                ["arena_extend_strategy"] = "kSameAsRequested",
+            };
+            if (gpuMemLimitBytes > 0)
+            {
+                settings["gpu_mem_limit"] = gpuMemLimitBytes.ToString();
+            }
+            cudaOptions.UpdateOptions(settings);
+            sessionOptions.AppendExecutionProvider_CUDA(cudaOptions);
 #else
             throw new NotSupportedException(
                 "CUDA support is not compiled in. Rebuild with: dotnet build -c Release -p:UseGpu=true");

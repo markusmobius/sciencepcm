@@ -403,7 +403,8 @@ internal static class Program
         for (var i = 0; i < sessionCount; i++)
         {
             _sessions[i] = TextEmbedder.CreateSession(
-                options.ModelDirectory, options.IntraOpThreads, options.Gpu, options.GpuDevice);
+                options.ModelDirectory, options.IntraOpThreads, options.Gpu, options.GpuDevice,
+                options.GpuMemLimitGb > 0 ? (long)(options.GpuMemLimitGb * 1024L * 1024L * 1024L) : 0);
         }
 
         var embedders = new TextEmbedder[options.Workers];
@@ -509,6 +510,8 @@ internal sealed class Options
         GPU (requires: dotnet build -c Release -p:UseGpu=true):
           --gpu                  Use the CUDA execution provider.
           --gpu-device <n>       CUDA device index. Default: 0
+          --gpu-mem-limit <gb>   Cap GPU memory for this process, so another workload on
+                                 the same card is not starved. 0 = unlimited. Default: 0
 
         Validation:
           --verify-tokenizer <tokenizer-parity.json>
@@ -538,6 +541,7 @@ internal sealed class Options
     public bool Benchmark { get; private set; }
     public bool Gpu { get; private set; }
     public int GpuDevice { get; private set; }
+    public double GpuMemLimitGb { get; private set; }
     public int BenchmarkTexts { get; private set; } = 5_000;
     public string? VerifyTokenizer { get; private set; }
 
@@ -599,6 +603,7 @@ internal sealed class Options
                 case "--benchmark": options.Benchmark = true; break;
                 case "--gpu": options.Gpu = true; break;
                 case "--gpu-device": options.GpuDevice = int.Parse(Next()); break;
+                case "--gpu-mem-limit": options.GpuMemLimitGb = double.Parse(Next()); break;
                 case "--benchmark-texts": options.BenchmarkTexts = int.Parse(Next()); break;
                 case "--verify-tokenizer": options.VerifyTokenizer = Next(); break;
                 default: throw new ArgumentException($"Unrecognised argument '{flag}'.");
