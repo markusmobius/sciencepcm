@@ -435,3 +435,6 @@ out/
 *.duckdb.wal
 __pycache__/
 .venv/
+
+# RemoteBlobStore local cache (holds full-size artifact copies)
+.artifact-cache/
