@@ -22,6 +22,9 @@ public enum CorpusSchema
 public static class ParquetTextSource
 {
     // Nullability must mirror the file's definition levels exactly or Parquet.Net throws.
+    // These differ by source: the abstracts Parquet marks openalex_id required, while
+    // Parquet.Net writes every string column as optional, so our own chunk output is all
+    // nullable even where the writing type was non-nullable.
     private sealed class AbstractRow
     {
         [ParquetRequired]
@@ -32,11 +35,9 @@ public static class ParquetTextSource
 
     private sealed class ChunkTextRow
     {
-        [ParquetRequired]
-        public string ChunkId { get; set; } = "";
+        public string? ChunkId { get; set; }
         public string? Title { get; set; }
-        [ParquetRequired]
-        public string Text { get; set; } = "";
+        public string? Text { get; set; }
     }
 
     public static IEnumerable<string> ExpandGlob(string glob)
