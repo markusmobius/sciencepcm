@@ -98,19 +98,22 @@ public sealed class TextEmbedder : IDisposable
         if (useGpu)
         {
 #if USE_GPU
-            // The arena grows greedily by default, so the first process on the card can
-            // starve everything else. kSameAsRequested also avoids the doubling that
-            // fragments memory over a long run.
             var cudaOptions = new OrtCUDAProviderOptions();
             var settings = new Dictionary<string, string>
             {
                 ["device_id"] = deviceId.ToString(),
-                ["arena_extend_strategy"] = "kSameAsRequested",
             };
+
+            // Only constrain the allocator when sharing the card. The default arena
+            // strategy is what the 990 texts/s benchmark measured, so a dedicated run
+            // keeps it; kSameAsRequested trades some allocation churn for not grabbing
+            // more memory than the process actually needs.
             if (gpuMemLimitBytes > 0)
             {
                 settings["gpu_mem_limit"] = gpuMemLimitBytes.ToString();
+                settings["arena_extend_strategy"] = "kSameAsRequested";
             }
+
             cudaOptions.UpdateOptions(settings);
             sessionOptions.AppendExecutionProvider_CUDA(cudaOptions);
 #else
