@@ -10,8 +10,9 @@ on a 0-3 scale, and computes graded nDCG. Pooling matters: each document is judg
 once and reused across systems, so the comparison is fair and the cost scales with the
 size of the union rather than the number of systems.
 
-Grades are cached on disk by (query_id, document), which makes adding a sixth system
-cheap - only its unique documents need judging.
+There is no local cache. The LLM server caches on the prompt AND the model, so a
+re-run costs nothing and switching judge models cannot silently return the previous
+model's grades.
 """
 
 from __future__ import annotations
@@ -62,27 +63,26 @@ def ndcg_at_k(ranked_grades: list[int], pooled_grades: list[int], k: int) -> flo
     return dcg(ranked_grades[:k]) / ideal if ideal > 0 else 0.0
 
 
-async def judge_pairs(pairs, texts, questions, model, workers, cache, cache_path):
-    """Grade every unjudged pair, refreshing the cache file as results arrive."""
+async def judge_pairs(pairs, texts, questions, model, workers):
+    """Grade every pair, returning {"query_id|key": grade}."""
     from LlmClient.LlmLib import LlmFactory
     from LlmClient.Models import Chat
 
-    todo = [p for p in pairs if f"{p[0]}|{p[1]}" not in cache]
-    print(f"pairs total {len(pairs):,}, cached {len(pairs) - len(todo):,}, to judge {len(todo):,}")
-    if not todo:
-        return
+    print(f"pairs to judge: {len(pairs):,} with {workers} workers on {model}")
 
     queue: asyncio.Queue = asyncio.Queue()
-    for pair in todo:
+    for pair in pairs:
         queue.put_nowait(pair)
 
     factory = LlmFactory()
+    grades: dict[str, int] = {}
     done = 0
     errors = 0
+    cached = 0
     lock = asyncio.Lock()
 
     async def worker():
-        nonlocal done, errors
+        nonlocal done, errors, cached
         client = await factory.create_client()
         try:
             while True:
@@ -106,21 +106,22 @@ async def judge_pairs(pairs, texts, questions, model, workers, cache, cache_path
                     if output.error is not None:
                         errors += 1
                     else:
+                        if output.isCached:
+                            cached += 1
                         try:
                             parsed = json.loads(output.answer.ChatAnswer)
-                            cache[f"{query_id}|{key}"] = int(parsed["relevance"])
+                            grades[f"{query_id}|{key}"] = int(parsed["relevance"])
                         except Exception:
                             errors += 1
 
-                    if done % 100 == 0:
-                        print(f"  judged {done:,}/{len(todo):,} ({errors} errors)")
-                        cache_path.write_text(json.dumps(cache), encoding="utf-8")
+                    if done % 200 == 0:
+                        print(f"  judged {done:,}/{len(pairs):,}  ({errors} errors, {cached:,} served from cache)")
         finally:
             await client.Close()
 
     await asyncio.gather(*[worker() for _ in range(workers)])
-    cache_path.write_text(json.dumps(cache), encoding="utf-8")
-    print(f"  judged {done:,}/{len(todo):,} ({errors} errors)")
+    print(f"  judged {done:,}/{len(pairs):,}  ({errors} errors, {cached:,} served from cache)")
+    return grades
 
 
 def main() -> int:
@@ -133,9 +134,8 @@ def main() -> int:
     parser.add_argument("--articles", required=True, help="Glob for the abstracts Parquet")
     parser.add_argument("--top", type=int, default=10, help="Depth to judge and score.")
     parser.add_argument("--sample", type=int, default=150, help="Queries to judge.")
-    parser.add_argument("--workers", type=int, default=8)
-    parser.add_argument("--model", default="gpt-5-mini_2025-08-07")
-    parser.add_argument("--cache", type=Path, default=Path("judge-cache.json"))
+    parser.add_argument("--workers", type=int, default=32, help="The server runs 50 threads.")
+    parser.add_argument("--model", default="gpt-5.6-sol_2026-07-09")
     parser.add_argument("--seed", type=int, default=11)
     parser.add_argument("--out", type=Path, default=None)
     args = parser.parse_args()
@@ -182,9 +182,8 @@ def main() -> int:
     print(f"documents pooled: {len(wanted):,}, text found for {len(texts):,}")
 
     pairs = [(qid, key) for qid, keys in pooled.items() for key in keys if key in texts]
-    cache = json.loads(args.cache.read_text(encoding="utf-8")) if args.cache.exists() else {}
 
-    asyncio.run(judge_pairs(pairs, texts, questions, args.model, args.workers, cache, args.cache))
+    grades = asyncio.run(judge_pairs(pairs, texts, questions, args.model, args.workers))
 
     results = {}
     print()
@@ -194,9 +193,9 @@ def main() -> int:
     for label, run in zip(labels, runs):
         scores, means, strong = [], [], []
         for query_id in chosen:
-            pool_grades = [cache.get(f"{query_id}|{k}") for k in pooled[query_id]]
+            pool_grades = [grades.get(f"{query_id}|{k}") for k in pooled[query_id]]
             pool_grades = [g for g in pool_grades if g is not None]
-            ranked = [cache.get(f"{query_id}|{k}", 0) for k in run[query_id][: args.top]]
+            ranked = [grades.get(f"{query_id}|{k}", 0) for k in run[query_id][: args.top]]
             if not pool_grades:
                 continue
             scores.append(ndcg_at_k(ranked, pool_grades, args.top))
@@ -213,7 +212,10 @@ def main() -> int:
 
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)
-        args.out.write_text(json.dumps({"queries": len(chosen), "systems": results}, indent=2), encoding="utf-8")
+        args.out.write_text(
+            json.dumps({"queries": len(chosen), "model": args.model, "systems": results}, indent=2),
+            encoding="utf-8",
+        )
         print(f"\nWrote {args.out}")
 
     return 0
