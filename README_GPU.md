@@ -6,6 +6,9 @@ and renewable, so expect to do this again.
 Everything runs from one script — `tools/gcr-prep.sh` — which is idempotent. Re-running
 it is safe and cheap; each step checks before acting.
 
+To deploy the MCP server on an already-provisioned box, skip to
+[Deploying the MCP server](#deploying-the-mcp-server).
+
 ---
 
 ## 1. Get on the right machine
@@ -234,6 +237,130 @@ dotnet run --project src/SciencePcm.Embed -c Release -p:UseGpu=true -- \
   --input "~/sciencepcm-data/sciencepcm/abstracts/part-*.parquet" \
   --out ~/sciencepcm-data/vectors/abstracts --gpu --workers 4 --batch 256
 ```
+
+---
+
+## Deploying the MCP server
+
+The serving path is **BM25 (Lucene.NET) then MedCPT cross-encoder reranking**. There is
+no dense retrieval in it: an LLM judge over 150 questions scored BM25+rerank at 0.771
+graded nDCG@10 against 0.765 for dense-fused+rerank and 0.676 for BM25 alone, so the
+HNSW index and the embedding vectors are not on the query path at all. They stay
+archived in the blob store in case the full-text tier behaves differently.
+
+### 1. Build the served index
+
+Distinct from the eval index: this one *stores* title, abstract, year and PMID, because
+the reranker needs the passage text at query time and `get_paper` returns it.
+
+```bash
+source ~/sciencepcm-data/env.sh
+cd ~/sciencepcm
+
+dotnet run --project src/SciencePcm.Lexical -c Release -- build \
+  --input "$HOME/sciencepcm-data/sciencepcm/abstracts/*.parquet" \
+  --schema abstracts \
+  --out ~/sciencepcm-data/index/abstracts-bm25-v2 \
+  --threads 16 --ram-buffer 2048
+```
+
+### 2. Export the cross-encoder
+
+Only needed once, and already done if `~/sciencepcm-data/models/medcpt-cross` exists.
+
+```bash
+~/sciencepcm-data/venvs/lab/bin/python tools/export_onnx.py \
+  --out ~/sciencepcm-data/models --cross-only
+```
+
+It self-checks: PyTorch vs ONNX Runtime parity, a different batch shape at verification
+than at export, and matched query/passage pairs must outscore deliberately mismatched
+ones.
+
+### 3. Set the token
+
+In `~/.bashrc`, so it survives reconnects:
+
+```bash
+export SCIENCEPCM_TOKEN="a-long-random-string"
+```
+
+Without it the server starts anyway and prints `auth : OPEN - no token set`. It listens
+on the LAN, so treat that warning as real. The token is a shared secret over plain HTTP,
+not transport security - anything beyond a trusted network needs TLS in front.
+
+### 4. Run it
+
+```bash
+screen -S mcp
+source ~/sciencepcm-data/env.sh
+cd ~/sciencepcm
+
+dotnet run --project src/SciencePcm.Server -c Release -p:UseGpu=true -- \
+  --index ~/sciencepcm-data/index/abstracts-bm25-v2 \
+  --cross-encoder ~/sciencepcm-data/models/medcpt-cross \
+  --gpu \
+  --urls http://0.0.0.0:8080
+```
+
+`Ctrl+A` `D` to detach. Confirm with:
+
+```bash
+curl -s localhost:8080/health
+```
+
+The service loads the index and the model at startup rather than on first request, so a
+wrong path fails immediately instead of on someone's first question.
+
+### 5. Point an LLM at it
+
+MCP over Streamable HTTP at `/mcp`. In VS Code, `.vscode/mcp.json`:
+
+```json
+{
+  "servers": {
+    "sciencepcm": {
+      "type": "http",
+      "url": "http://GCRAZGDL3024:8080/mcp",
+      "headers": { "Authorization": "Bearer a-long-random-string" }
+    }
+  }
+}
+```
+
+If port 8080 is not routable from the client, tunnel it:
+
+```bash
+ssh -L 8080:localhost:8080 GCRAZGDL3024
+```
+
+and use `http://localhost:8080/mcp`.
+
+### Tools exposed
+
+| tool | purpose |
+|---|---|
+| `search_literature` | Natural-language question, optional `yearMin`/`yearMax`, optional `fast` to skip reranking. |
+| `get_paper` | Full abstract by article key. |
+| `corpus_stats` | Corpus scope and its caveats. |
+
+`search_literature` wants a full question, not keywords - the cross-encoder reads the
+question and the abstract together, so phrasing carries signal. Results are deduplicated
+by title, because the corpus holds the same paper under several OpenAlex ids.
+
+### Sharing the GPU
+
+The cross-encoder scores `--rerank-candidates` pairs per query (100 by default), which
+dominates latency. On CPU that was 0.5-1.0 s per 50 pairs, which is why `--gpu` matters.
+
+To share the card with the LegoPCM hourly job, cap the allocator:
+
+```bash
+--gpu-mem-limit-gb 8
+```
+
+To trade quality for latency, lower `--rerank-candidates` to 50, or let callers pass
+`fast: true`.
 
 ---
 

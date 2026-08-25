@@ -1,6 +1,24 @@
 using SciencePcm.Server;
 
-var builder = WebApplication.CreateBuilder(args);
+// The configuration binder expects "--key value", so a bare "--gpu" would otherwise
+// consume the next switch as its value.
+var builder = WebApplication.CreateBuilder(ExpandFlags(args, "gpu"));
+
+static string[] ExpandFlags(string[] args, params string[] flags)
+{
+    var expanded = new List<string>(args.Length + flags.Length);
+
+    for (var i = 0; i < args.Length; i++)
+    {
+        expanded.Add(args[i]);
+        if (!flags.Contains(args[i].TrimStart('-'))) continue;
+
+        var hasValue = i + 1 < args.Length && !args[i + 1].StartsWith('-');
+        if (!hasValue) expanded.Add("true");
+    }
+
+    return [.. expanded];
+}
 
 var index = builder.Configuration["index"]
     ?? throw new InvalidOperationException("--index <lucene directory> is required.");
