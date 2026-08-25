@@ -41,7 +41,7 @@ var token = builder.Configuration["token"] ?? Environment.GetEnvironmentVariable
 // Browser clients need CORS, and MCP carries its session in a custom header that must be
 // explicitly exposed or the browser will hide it from script.
 var corsOrigins = (builder.Configuration["cors-origins"]
-        ?? "http://localhost:5173,http://127.0.0.1:5173")
+        ?? "https://www.mcptest.econlabs.org,http://localhost:5173,http://127.0.0.1:5173")
     .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
 builder.Services.AddCors(options => options.AddDefaultPolicy(policy => policy
