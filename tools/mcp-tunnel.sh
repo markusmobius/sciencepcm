@@ -10,7 +10,7 @@
 
 set -uo pipefail
 
-REMOTE="${REMOTE:-markusmobius@www.legopds.projectratio.net}"
+REMOTE="${REMOTE:-markusmobius@www.llmserver.econlabs.org}"
 REMOTE_PORT="${REMOTE_PORT:-9201}"
 LOCAL_PORT="${LOCAL_PORT:-8080}"
 KEY="${KEY:-$HOME/.ssh/id_ed25519}"
