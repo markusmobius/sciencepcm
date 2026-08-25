@@ -34,6 +34,8 @@
   .tool { cursor: pointer; }
   .tool.active { border-color: #2a5db0; }
   .hint { font-size: 12px; color: #9aa4b2; }
+  .panel[hidden] { display: none; }
+  .placeholder { color: #9aa4b2; font-size: 13px; padding: 40px 0; text-align: center; }
 </style>
 </head>
 <body>
@@ -78,7 +80,9 @@
 </header>
 
 <main>
-  <section>
+  <div id="placeholder" class="placeholder">Connect to a server to search and inspect its tools.</div>
+
+  <section class="panel" id="quickPanel" hidden>
     <h2>Quick search</h2>
     <div class="row">
       <input id="query" size="70" placeholder="What is the role of microglia in synaptic pruning?">
@@ -86,10 +90,11 @@
       <label style="margin:0"><input type="checkbox" id="fast" style="min-width:auto"> fast (no rerank)</label>
       <button id="search" disabled>Search</button>
     </div>
+    <div class="hint" id="quickHint" style="margin-top:6px"></div>
     <div id="results"></div>
   </section>
 
-  <section>
+  <section class="panel" id="toolsPanel" hidden>
     <h2>Tools</h2>
     <div id="tools" class="hint">Connect to list tools.</div>
     <div id="callBox" style="display:none; margin-top:10px">
@@ -102,7 +107,7 @@
     </div>
   </section>
 
-  <section>
+  <section class="panel" id="logPanel" hidden>
     <h2>Log</h2>
     <pre id="log"></pre>
   </section>
@@ -115,18 +120,34 @@ const $ = id => document.getElementById(id);
 // server's credential to another.
 const tokenKey = url => 'mcp.token:' + url;
 
+// A question that actually exercises each server, so the first click is informative.
+const DEFAULT_QUERY = {
+  'https://www.sciencemcp.econlabs.org/mcp': 'What is the role of microglia in synaptic pruning?',
+  'http://localhost:8080/mcp': 'What is the role of microglia in synaptic pruning?',
+  'https://www.academic.econlabs.org/mcp': 'Papers by Brendan Lucier in AER',
+};
+
 let sessionId = null;
 let nextId = 1;
 let selectedTool = null;
+let quickTool = null;
 let revealTimer = null;
 
 function loadServer(url) {
   $('url').value = url;
   $('token').value = localStorage.getItem(tokenKey(url)) || '';
+  $('query').value = DEFAULT_QUERY[url] || '';
   localStorage.setItem('mcp.lastUrl', url);
   sessionId = null;
   setStatus('not connected');
-  $('search').disabled = true;
+  showPanels(false);
+  $('results').innerHTML = '';
+  $('callBox').style.display = 'none';
+}
+
+function showPanels(visible) {
+  for (const id of ['quickPanel', 'toolsPanel', 'logPanel']) $(id).hidden = !visible;
+  $('placeholder').hidden = visible;
 }
 
 function initServerPicker() {
@@ -234,12 +255,44 @@ async function connect() {
     renderTools(available);
 
     setStatus('connected', 'ok');
-    // Quick search is SciencePCM-specific; other servers expose different tools.
-    $('search').disabled = !available.some(t => t.name === 'search_literature');
+    bindQuickSearch(available);
+    showPanels(true);
   } catch (error) {
     setStatus('failed', 'bad');
+    showPanels(false);
     log('error', error.message);
+    // The log is the only useful thing to show after a failure.
+    $('logPanel').hidden = false;
+    $('placeholder').hidden = true;
   }
+}
+
+// Different servers name their search tool and its arguments differently, so bind to
+// whatever this one exposes rather than assuming search_literature.
+function bindQuickSearch(tools) {
+  quickTool = null;
+
+  for (const tool of tools) {
+    if (!/search|find|query/i.test(tool.name)) continue;
+    const properties = tool.inputSchema?.properties || {};
+    const queryParam = Object.keys(properties).find(name =>
+      properties[name].type === 'string' && /query|keyword|search|text|q$/i.test(name));
+    if (!queryParam) continue;
+
+    const countParam = Object.keys(properties).find(name =>
+      ['integer', 'number'].includes(properties[name].type) &&
+      /^(k|limit|count|top|per_?page|max\w*)$/i.test(name));
+
+    quickTool = { tool, queryParam, countParam, hasFast: 'fast' in properties };
+    break;
+  }
+
+  $('search').disabled = !quickTool;
+  $('fast').disabled = !quickTool?.hasFast;
+  $('quickHint').textContent = quickTool
+    ? `calls ${quickTool.tool.name}(${quickTool.queryParam}` +
+      `${quickTool.countParam ? ', ' + quickTool.countParam : ''})`
+    : 'This server exposes no recognisable search tool - use the Tools panel below.';
 }
 
 function renderTools(tools) {
@@ -312,14 +365,15 @@ $('connect').onclick = connect;
 $('clearLog').onclick = () => $('log').textContent = '';
 
 $('search').onclick = async () => {
+  if (!quickTool) return;
   $('search').disabled = true;
   $('results').innerHTML = '<div class="hint">searching...</div>';
   try {
-    const response = await callTool('search_literature', {
-      query: $('query').value,
-      k: Number($('k').value),
-      fast: $('fast').checked,
-    });
+    const args = { [quickTool.queryParam]: $('query').value };
+    if (quickTool.countParam) args[quickTool.countParam] = Number($('k').value);
+    if (quickTool.hasFast) args.fast = $('fast').checked;
+
+    const response = await callTool(quickTool.tool.name, args);
     renderResults(response);
   } catch (error) {
     $('results').innerHTML = '';
@@ -333,7 +387,7 @@ $('call').onclick = async () => {
   if (!selectedTool) return;
   try {
     const response = await callTool(selectedTool.name, JSON.parse($('args').value));
-    if (selectedTool.name === 'search_literature') renderResults(response);
+    renderResults(response);
   } catch (error) {
     log('error', error.message);
   }
