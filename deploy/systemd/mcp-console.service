@@ -1,0 +1,27 @@
+# MCP test console, served behind nginx at https://www.mcptest.econlabs.org
+#
+# Install (as the user that owns ~/sciencepcm, no sudo needed):
+#   cd ~/sciencepcm && dotnet publish src/SciencePcm.Inspector -c Release
+#   mkdir -p ~/.config/systemd/user
+#   cp deploy/systemd/mcp-console.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now mcp-console
+#   loginctl enable-linger "$USER"      # keeps it running after you log out
+#
+# Check on it:
+#   systemctl --user status mcp-console
+#   journalctl --user -u mcp-console -f
+
+[Unit]
+Description=SciencePCM MCP test console
+After=network-online.target
+
+[Service]
+WorkingDirectory=%h/sciencepcm/src/SciencePcm.Inspector/bin/Release/net10.0/publish
+# Bound to loopback on purpose: nginx is the only thing that should reach it.
+ExecStart=/usr/bin/dotnet SciencePcm.Inspector.dll --urls http://localhost:6671
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
