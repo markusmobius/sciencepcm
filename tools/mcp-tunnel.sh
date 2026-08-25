@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Reverse-tunnel the MCP server to a public host, so clients that cannot reach the
-# GPU box directly connect to <relay>:9201 instead.
+# Reverse-tunnel the MCP servers to a public host, so clients that cannot reach the
+# GPU box connect to the relay instead.
 #
 # The A100 sits behind the corporate network; the relay is reachable from anywhere.
 # -R makes the relay listen and forward back down this connection, so nothing needs
@@ -11,8 +11,11 @@
 set -uo pipefail
 
 REMOTE="${REMOTE:-markusmobius@www.llmserver.econlabs.org}"
-REMOTE_PORT="${REMOTE_PORT:-9201}"
-LOCAL_PORT="${LOCAL_PORT:-8080}"
+# Space-separated remote:local pairs. One SSH connection carries them all, so both
+# endpoints go up and down together rather than drifting apart.
+#   9201 -> production server on 8080
+#   6671 -> staging server on 6671
+FORWARDS="${FORWARDS:-9201:8080 6671:6671}"
 KEY="${KEY:-$HOME/.ssh/id_ed25519}"
 RETRY_SECONDS="${RETRY_SECONDS:-5}"
 
@@ -21,7 +24,14 @@ if [[ ! -f "$KEY" ]]; then
   exit 1
 fi
 
-echo "tunnel: ${REMOTE}:${REMOTE_PORT} -> localhost:${LOCAL_PORT}"
+forward_args=()
+for pair in $FORWARDS; do
+  remote_port="${pair%%:*}"
+  local_port="${pair##*:}"
+  forward_args+=(-R "${remote_port}:localhost:${local_port}")
+  echo "tunnel: ${REMOTE}:${remote_port} -> localhost:${local_port}"
+done
+
 echo "key   : ${KEY}"
 
 while true; do
@@ -36,7 +46,7 @@ while true; do
       -o "ServerAliveCountMax 3" \
       -o "ExitOnForwardFailure yes" \
       -o "StrictHostKeyChecking accept-new" \
-      -R "${REMOTE_PORT}:localhost:${LOCAL_PORT}" \
+      "${forward_args[@]}" \
       "$REMOTE"
 
   echo "$(date '+%Y-%m-%d %H:%M:%S') connection closed (exit $?). Retrying in ${RETRY_SECONDS}s ..."

@@ -314,6 +314,44 @@ wrong path fails immediately instead of on someone's first question.
 
 ### 5. Point an LLM at it
 
+### 5. Expose it publicly
+
+The GPU box takes no inbound connections, so a reverse SSH tunnel makes it appear on the
+relay (`www.llmserver.econlabs.org`), where nginx terminates TLS.
+
+```bash
+screen -S tunnel
+cd ~/sciencepcm
+./tools/mcp-tunnel.sh
+```
+
+One SSH connection carries both endpoints, so they cannot drift apart:
+
+| relay port | local port | serves |
+| --- | --- | --- |
+| 9201 | 8080 | `https://www.sciencemcp.econlabs.org` — production |
+| 6671 | 6671 | `https://www.mcptest.econlabs.org` — staging |
+
+Override with `FORWARDS="9201:8080"` to run only one. The nginx vhosts live in
+`deploy/nginx/`; each file carries its own install instructions in a header comment.
+
+`-R` binds to the relay's loopback, so 9201 and 6671 are never directly exposed — only
+nginx can reach them. Verify with `ss -tlnp | grep -E '9201|6671'` on the relay.
+
+To run a staging instance alongside production, start a second server on 6671:
+
+```bash
+dotnet run --project src/SciencePcm.Server -c Release -p:UseGpu=true -- \
+  --index ~/sciencepcm-data/index/abstracts-bm25-v2 \
+  --cross-encoder ~/sciencepcm-data/models/medcpt-cross \
+  --gpu --gpu-mem-limit-gb 8 \
+  --urls http://0.0.0.0:6671
+```
+
+Cap its GPU memory — two unconstrained ONNX sessions will fight over the card.
+
+### 6. Point an LLM at it
+
 MCP over Streamable HTTP at `/mcp`. In VS Code, `.vscode/mcp.json`:
 
 ```json
@@ -321,20 +359,34 @@ MCP over Streamable HTTP at `/mcp`. In VS Code, `.vscode/mcp.json`:
   "servers": {
     "sciencepcm": {
       "type": "http",
-      "url": "http://GCRAZGDL3024:8080/mcp",
+      "url": "https://www.sciencemcp.econlabs.org/mcp",
       "headers": { "Authorization": "Bearer a-long-random-string" }
     }
   }
 }
 ```
 
-If port 8080 is not routable from the client, tunnel it:
+Check the chain in order, so a failure names its own hop:
 
 ```bash
-ssh -L 8080:localhost:8080 GCRAZGDL3024
+curl -s localhost:8080/health                          # on the GPU box
+curl -s localhost:9201/health                          # on the relay: tunnel up?
+curl -s https://www.sciencemcp.econlabs.org/health     # anywhere: nginx and TLS
 ```
 
-and use `http://localhost:8080/mcp`.
+`/health` needs no token, so it separates "unreachable" from "wrong token".
+
+### 7. Try it by hand
+
+`src/SciencePcm.Inspector` is a local console for exercising any MCP server — server
+picker, per-server bearer tokens in localStorage, tool browser and a result view.
+
+```bash
+dotnet run --project src/SciencePcm.Inspector -c Release
+```
+
+Then open <http://localhost:5173>. It proxies requests through itself by default, which
+sidesteps CORS on servers that send no such headers.
 
 ### Tools exposed
 
