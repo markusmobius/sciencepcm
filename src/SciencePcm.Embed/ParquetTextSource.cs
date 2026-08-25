@@ -6,6 +6,9 @@ namespace SciencePcm.Embed;
 
 public sealed record TextRecord(string Id, string Text);
 
+/// <summary>Title and body kept apart, plus the fields the server displays and filters on.</summary>
+public sealed record ArticleRecord(string Id, string Title, string Body, int Year, string Pmid);
+
 public enum CorpusSchema
 {
     /// <summary>OpenAlex-neuroscience-abstracts: openalex_id, title, abstract.</summary>
@@ -38,6 +41,18 @@ public static class ParquetTextSource
         public string? ChunkId { get; set; }
         public string? Title { get; set; }
         public string? Text { get; set; }
+    }
+
+    // Separate DTO from AbstractRow: asking for columns the embedder never needs would
+    // slow every embedding run down for the sake of the server.
+    private sealed class ArticleMetaRow
+    {
+        [ParquetRequired]
+        public string openalex_id { get; set; } = "";
+        public string? title { get; set; }
+        public string? @abstract { get; set; }
+        public int? publication_year { get; set; }
+        public string? pmid { get; set; }
     }
 
     public static IEnumerable<string> ExpandGlob(string glob)
@@ -93,5 +108,42 @@ public static class ParquetTextSource
             : body;
 
         return new TextRecord(id, text);
+    }
+
+    /// <summary>Title, body and metadata kept separate, for building the served index.</summary>
+    public static async IAsyncEnumerable<ArticleRecord> ReadArticlesAsync(string glob, CorpusSchema schema)
+    {
+        var files = ExpandGlob(glob).ToList();
+        if (files.Count == 0)
+        {
+            throw new FileNotFoundException($"No Parquet files matched '{glob}'.");
+        }
+
+        foreach (var path in files)
+        {
+            await using var stream = File.OpenRead(path);
+
+            if (schema == CorpusSchema.Abstracts)
+            {
+                foreach (var row in (await ParquetSerializer.DeserializeAsync<ArticleMetaRow>(stream)).Data)
+                {
+                    if (string.IsNullOrEmpty(row.openalex_id) || string.IsNullOrWhiteSpace(row.@abstract)) continue;
+                    yield return new ArticleRecord(
+                        row.openalex_id,
+                        row.title ?? "",
+                        row.@abstract!,
+                        row.publication_year ?? 0,
+                        row.pmid ?? "");
+                }
+            }
+            else
+            {
+                foreach (var row in (await ParquetSerializer.DeserializeAsync<ChunkTextRow>(stream)).Data)
+                {
+                    if (string.IsNullOrEmpty(row.ChunkId) || string.IsNullOrWhiteSpace(row.Text)) continue;
+                    yield return new ArticleRecord(row.ChunkId!, row.Title ?? "", row.Text!, 0, "");
+                }
+            }
+        }
     }
 }

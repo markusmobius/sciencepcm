@@ -6,5 +6,6 @@
     <Project Path="src/SciencePcm.Ingest/SciencePcm.Ingest.csproj" />
     <Project Path="src/SciencePcm.Lexical/SciencePcm.Lexical.csproj" />
     <Project Path="src/SciencePcm.Search/SciencePcm.Search.csproj" />
+    <Project Path="src/SciencePcm.Server/SciencePcm.Server.csproj" />
   </Folder>
 </Solution>

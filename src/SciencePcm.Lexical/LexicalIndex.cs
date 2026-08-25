@@ -9,11 +9,21 @@ using Lucene.Net.Util;
 
 namespace SciencePcm.Lexical;
 
-public sealed record LexicalHit(string Id, string ArticleKey, float Score);
+public sealed record LexicalHit(
+    string Id,
+    string ArticleKey,
+    string Title,
+    string Body,
+    int Year,
+    string Pmid,
+    float Score);
 
 /// <summary>
 /// BM25 over the same text the dense side embeds. Lucene replaces the DuckDB FTS
 /// baseline, which ran a full scan per query at 13 s each.
+///
+/// Title and body are stored, not just indexed: the cross-encoder needs the passage text
+/// at query time, and keeping it here avoids holding ~15 GB of abstracts in memory.
 /// </summary>
 public static class LexicalIndex
 {
@@ -22,19 +32,36 @@ public static class LexicalIndex
     public const string IdField = "id";
     public const string KeyField = "key";
     public const string BodyField = "body";
+    public const string TitleField = "title";
+    public const string YearField = "year";
+    public const string PmidField = "pmid";
+    public const string SearchField = "body_search";
 
     /// <summary>Stemming and stopword removal matter more than exact term matching here.</summary>
     public static Analyzer CreateAnalyzer() => new EnglishAnalyzer(Version);
 
-    public static Document CreateDocument(string id, string articleKey, string text)
+    public static Document CreateDocument(string id, string articleKey, string title, string body, int year, string pmid)
     {
         var document = new Document
         {
             new StringField(IdField, id, Field.Store.YES),
             new StringField(KeyField, articleKey, Field.Store.YES),
-            // Not stored: the text is already in Parquet, and storing it would double the index.
-            new TextField(BodyField, text, Field.Store.NO),
+            new StoredField(TitleField, title),
+            new StoredField(BodyField, body),
+            // The searchable copy carries the title, which is where much of the signal is.
+            new TextField(SearchField, string.IsNullOrEmpty(title) ? body : title + ". " + body, Field.Store.NO),
         };
+
+        if (year > 0)
+        {
+            document.Add(new Int32Field(YearField, year, Field.Store.YES));
+        }
+
+        if (!string.IsNullOrEmpty(pmid))
+        {
+            document.Add(new StringField(PmidField, pmid, Field.Store.YES));
+        }
+
         return document;
     }
 
@@ -64,32 +91,52 @@ public sealed class LexicalSearcher : IDisposable
 
     public int Count => _reader.NumDocs;
 
-    public List<LexicalHit> Search(string query, int k)
+    public List<LexicalHit> Search(string query, int k, int? yearMin = null, int? yearMax = null)
     {
         // Built through the analyzer rather than a query parser, so that punctuation in a
         // natural-language question cannot throw a syntax error.
         var builder = new QueryBuilder(_analyzer);
-        var parsed = builder.CreateBooleanQuery(LexicalIndex.BodyField, query, Occur.SHOULD);
+        var parsed = builder.CreateBooleanQuery(LexicalIndex.SearchField, query, Occur.SHOULD);
         if (parsed is null) return [];
 
-        var top = _searcher.Search(parsed, k);
+        Query effective = parsed;
+        if (yearMin is not null || yearMax is not null)
+        {
+            var combined = new BooleanQuery
+            {
+                { parsed, Occur.MUST },
+                { NumericRangeQuery.NewInt32Range(LexicalIndex.YearField, yearMin, yearMax, true, true), Occur.MUST },
+            };
+            effective = combined;
+        }
+
+        var top = _searcher.Search(effective, k);
         var hits = new List<LexicalHit>(top.ScoreDocs.Length);
 
         foreach (var scoreDoc in top.ScoreDocs)
         {
-            var document = _searcher.Doc(scoreDoc.Doc);
-            hits.Add(new LexicalHit(
-                document.Get(LexicalIndex.IdField),
-                document.Get(LexicalIndex.KeyField),
-                scoreDoc.Score));
+            hits.Add(ToHit(_searcher.Doc(scoreDoc.Doc), scoreDoc.Score));
         }
 
         return hits;
     }
 
-    public List<LexicalHit> SearchArticles(string query, int k)
+    private static LexicalHit ToHit(Document document, float score)
     {
-        var passages = Search(query, k * _fetchMultiplier);
+        var year = document.Get(LexicalIndex.YearField);
+        return new LexicalHit(
+            document.Get(LexicalIndex.IdField),
+            document.Get(LexicalIndex.KeyField),
+            document.Get(LexicalIndex.TitleField) ?? "",
+            document.Get(LexicalIndex.BodyField) ?? "",
+            int.TryParse(year, out var parsed) ? parsed : 0,
+            document.Get(LexicalIndex.PmidField) ?? "",
+            score);
+    }
+
+    public List<LexicalHit> SearchArticles(string query, int k, int? yearMin = null, int? yearMax = null)
+    {
+        var passages = Search(query, k * _fetchMultiplier, yearMin, yearMax);
         var best = new Dictionary<string, LexicalHit>(passages.Count);
 
         foreach (var hit in passages)
@@ -101,6 +148,13 @@ public sealed class LexicalSearcher : IDisposable
         }
 
         return best.Values.OrderByDescending(h => h.Score).Take(k).ToList();
+    }
+
+    /// <summary>Exact lookup by article key, for get_paper.</summary>
+    public LexicalHit? GetByKey(string key)
+    {
+        var top = _searcher.Search(new TermQuery(new Term(LexicalIndex.KeyField, key)), 1);
+        return top.ScoreDocs.Length == 0 ? null : ToHit(_searcher.Doc(top.ScoreDocs[0].Doc), 0f);
     }
 
     public void Dispose()

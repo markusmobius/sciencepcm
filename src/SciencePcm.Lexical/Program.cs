@@ -56,7 +56,7 @@ public static class Program
 
         using var writer = new IndexWriter(directory, config);
 
-        var queue = new BlockingCollection<TextRecord>(options.Threads * 4096);
+        var queue = new BlockingCollection<ArticleRecord>(options.Threads * 4096);
         var stopwatch = Stopwatch.StartNew();
         var indexed = 0L;
         var skipped = 0L;
@@ -68,7 +68,8 @@ public static class Program
             foreach (var record in queue.GetConsumingEnumerable())
             {
                 var key = LexicalIndex.ArticleKeyOf(record.Id);
-                writer.AddDocument(LexicalIndex.CreateDocument(record.Id, key, record.Text));
+                writer.AddDocument(LexicalIndex.CreateDocument(
+                    record.Id, key, record.Title, record.Body, record.Year, record.Pmid));
 
                 var count = Interlocked.Increment(ref indexed);
                 if (count % 500_000 == 0)
@@ -79,9 +80,9 @@ public static class Program
             }
         })).ToArray();
 
-        await foreach (var record in ParquetTextSource.ReadAsync(options.Input, options.Schema, includeTitle: true))
+        await foreach (var record in ParquetTextSource.ReadArticlesAsync(options.Input, options.Schema))
         {
-            if (string.IsNullOrWhiteSpace(record.Text))
+            if (string.IsNullOrWhiteSpace(record.Body))
             {
                 skipped++;
                 continue;
