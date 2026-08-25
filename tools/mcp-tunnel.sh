@@ -50,22 +50,5 @@ while true; do
   sleep "$RETRY_SECONDS"
 done
 
-# Install as a user service instead of a screen session:
-#
-#   mkdir -p ~/.config/systemd/user
-#   cat > ~/.config/systemd/user/mcp-tunnel.service <<'UNIT'
-#   [Unit]
-#   Description=SciencePCM MCP reverse tunnel
-#   After=network-online.target
-#
-#   [Service]
-#   ExecStart=%h/sciencepcm/tools/mcp-tunnel.sh
-#   Restart=always
-#   RestartSec=5
-#
-#   [Install]
-#   WantedBy=default.target
-#   UNIT
-#   systemctl --user daemon-reload
-#   systemctl --user enable --now mcp-tunnel
-#   loginctl enable-linger "$USER"     # keeps it running when you log out
+# To run this as a service instead of under screen, see
+# deploy/systemd/mcp-tunnel.service.

@@ -1,0 +1,41 @@
+# SciencePCM MCP server (GPU box).
+#
+# Install:
+#   cd ~/sciencepcm && bash tools/gcr-prep.sh          # models + indexes first
+#   echo 'SCIENCEPCM_TOKEN=your-long-random-string' | sudo tee /etc/sciencepcm.env
+#   sudo chmod 600 /etc/sciencepcm.env
+#   sudo cp deploy/systemd/mcp-server.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now mcp-server
+#
+# Check on it:
+#   systemctl status mcp-server
+#   journalctl -u mcp-server -f
+#   curl -s localhost:8080/health
+#
+# Adjust User= and the /home/mobius paths if the box differs.
+
+[Unit]
+Description = mcp-server
+After = network.target
+
+[Service]
+Type=simple
+User=mobius
+
+WorkingDirectory=/home/mobius/sciencepcm
+
+# The token lives outside the repo. "-" means start anyway if the file is absent,
+# in which case the server runs unauthenticated and says so at startup.
+EnvironmentFile=-/etc/sciencepcm.env
+
+# bash -lc, not ExecStart directly: env.sh exports the CUDA 12 and cuDNN 9 library
+# paths ONNX Runtime needs, and it is a shell script rather than a systemd-style
+# KEY=VALUE EnvironmentFile.
+ExecStart=/bin/bash -lc 'source /home/mobius/sciencepcm-data/env.sh && exec dotnet run --project src/SciencePcm.Server -c Release -p:UseGpu=true --no-build -- --index /home/mobius/sciencepcm-data/index/abstracts-bm25 --passage-index /home/mobius/sciencepcm-data/index/passages-bm25 --cross-encoder /home/mobius/sciencepcm-data/models/medcpt-cross --gpu --urls http://0.0.0.0:8080'
+
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

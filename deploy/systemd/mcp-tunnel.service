@@ -1,0 +1,32 @@
+# Reverse SSH tunnel from the GPU box to the public relay.
+#
+# Install:
+#   sudo cp deploy/systemd/mcp-tunnel.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now mcp-tunnel
+#
+# Check on it:
+#   systemctl status mcp-tunnel
+#   journalctl -u mcp-tunnel -f
+#   ssh <relay> 'ss -tlnp | grep 9201'
+#
+# The key must be passphrase-less and already accepted by the relay; see
+# tools/mcp-tunnel.sh for how to create and restrict it.
+
+[Unit]
+Description = mcp-tunnel
+After = network.target
+
+[Service]
+Type=simple
+User=mobius
+
+WorkingDirectory=/home/mobius/sciencepcm
+ExecStart=/home/mobius/sciencepcm/tools/mcp-tunnel.sh
+
+# The script retries internally, so this only covers it exiting altogether.
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

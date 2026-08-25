@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
-# Prepare the A100 box: prerequisites, environments, corpus, models, build.
+# Prepare the A100 box: prerequisites, environments, corpus, models, build, indexes.
 #
 # Counterpart to tools/sync.ps1 on nerds21. That script produces the corpus and
 # uploads it; this one provisions this machine and pulls it down. Idempotent -
 # every step checks before acting, so re-running costs little.
 #
+# Ends with a machine that can serve: both BM25 indexes built, models exported.
+# The dense/embedding pipeline is NOT part of this - the served path is BM25 plus
+# cross-encoder reranking, and the vectors stay archived in the blob store.
+#
 #   bash tools/gcr-prep.sh --check     report only
-#   bash tools/gcr-prep.sh             provision, pull, build, verify
+#   bash tools/gcr-prep.sh             provision, pull, build, index, verify
 #
 # Requires legopds_clienthash (or CLOUDPDS_CLIENT_HASH) in the environment.
 
@@ -17,6 +21,7 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VENVS="$DATA_ROOT/venvs"
 CORPUS="$DATA_ROOT/sciencepcm"
 MODELS="$DATA_ROOT/models"
+INDEXES="$DATA_ROOT/index"
 DOTNET_CHANNEL="10.0"
 
 CHECK_ONLY=0
@@ -24,6 +29,8 @@ SKIP_PULL=0
 FORCE_PULL=0
 SKIP_MODELS=0
 SKIP_BUILD=0
+SKIP_INDEX=0
+FORCE_INDEX=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -32,7 +39,9 @@ while [[ $# -gt 0 ]]; do
         --force-pull)  FORCE_PULL=1 ;;
         --skip-models) SKIP_MODELS=1 ;;
         --skip-build)  SKIP_BUILD=1 ;;
-        -h|--help)     sed -n '2,12p' "${BASH_SOURCE[0]}"; exit 0 ;;
+        --skip-index)  SKIP_INDEX=1 ;;
+        --force-index) FORCE_INDEX=1 ;;
+        -h|--help)     sed -n '2,15p' "${BASH_SOURCE[0]}"; exit 0 ;;
         *)             echo "Unknown argument: $1" >&2; exit 1 ;;
     esac
     shift
@@ -275,26 +284,63 @@ else
     warn "no parity file at $parity"
 fi
 
+# ---------------------------------------------------------------- indexes
+
+step "Search indexes"
+
+# Both are BM25 over Lucene. Nothing here needs the GPU; the cross-encoder is only
+# used at query time.
+build_index() {
+    local name="$1" schema="$2" glob="$3"
+    local out="$INDEXES/$name"
+
+    if [[ -f "$out/segments.gen" || -n "$(ls -A "$out" 2>/dev/null)" ]] && [[ $FORCE_INDEX -eq 0 ]]; then
+        info "$(printf '%-22s' "$name") already built ($(du -sh "$out" 2>/dev/null | cut -f1))"
+        return
+    fi
+    if [[ $SKIP_INDEX -eq 1 || $SKIP_BUILD -eq 1 ]]; then
+        warn "$(printf '%-22s' "$name") skipped"
+        return
+    fi
+    if [[ $CHECK_ONLY -eq 1 ]]; then
+        warn "$(printf '%-22s' "$name") would build from $glob"
+        return
+    fi
+
+    info "$(printf '%-22s' "$name") building ..."
+    ( cd "$REPO" && dotnet run --project src/SciencePcm.Lexical -c Release --no-build -- build \
+        --input "$glob" --schema "$schema" --out "$out" \
+        --threads "$(nproc)" --ram-buffer 2048 )
+}
+
+mkdir -p "$INDEXES"
+build_index "abstracts-bm25" "abstracts" "$CORPUS/abstracts/*.parquet"
+build_index "passages-bm25"  "chunks"    "$CORPUS/passages-2019-2025/chunks-part-*.parquet"
+
 # ---------------------------------------------------------------- summary
 
 step "Ready"
 cat <<EOF
-  corpus : $CORPUS
-  models : $MODELS
-  venvs  : $VENVS
+  corpus  : $CORPUS
+  models  : $MODELS
+  indexes : $INDEXES
+  venvs   : $VENVS
 
   New shells need the CUDA libraries on the path:
     source $DATA_ROOT/env.sh
 
-  Benchmark the GPU:
-    dotnet run --project src/SciencePcm.Embed -c Release -p:UseGpu=true -- \\
-      --model $MODELS/medcpt-article \\
-      --input "$CORPUS/abstracts/part-*.parquet" \\
-      --benchmark --benchmark-texts 20000 --gpu --workers 4 --batch 256
+  Run the MCP server:
+    export SCIENCEPCM_TOKEN=...          # or put it in ~/.bashrc
+    dotnet run --project src/SciencePcm.Server -c Release -p:UseGpu=true -- \\
+      --index $INDEXES/abstracts-bm25 \\
+      --passage-index $INDEXES/passages-bm25 \\
+      --cross-encoder $MODELS/medcpt-cross \\
+      --gpu --urls http://0.0.0.0:8080
 
-  Then embed the abstract tier:
-    dotnet run --project src/SciencePcm.Embed -c Release -p:UseGpu=true -- \\
-      --model $MODELS/medcpt-article \\
-      --input "$CORPUS/abstracts/part-*.parquet" \\
-      --out $DATA_ROOT/vectors/abstracts --gpu --workers 4 --batch 256
+  Expose it (relay holds the public TLS endpoint):
+    ./tools/mcp-tunnel.sh
+
+  Or install both as services:
+    sudo cp deploy/systemd/*.service /etc/systemd/system/
+    sudo systemctl daemon-reload && sudo systemctl enable --now mcp-server mcp-tunnel
 EOF
