@@ -55,7 +55,7 @@ app.MapGet("/health", (RetrievalService retrieval) => Results.Ok(new
     documents = retrieval.DocumentCount,
 }));
 
-app.MapMcp();
+app.MapMcp("/mcp");
 
 // Touching the service now surfaces a bad index or model path at startup rather than on
 // the first request, and pays the model load before anyone is waiting.
@@ -64,5 +64,6 @@ Console.WriteLine($"index          : {options.IndexPath} ({warmup.DocumentCount:
 Console.WriteLine($"cross-encoder  : {options.CrossEncoderPath} (gpu={options.UseGpu})");
 Console.WriteLine($"rerank depth   : {options.RerankCandidates}");
 Console.WriteLine($"auth           : {(string.IsNullOrEmpty(token) ? "OPEN - no token set" : "bearer token required")}");
+Console.WriteLine($"mcp endpoint   : /mcp");
 
 app.Run();
