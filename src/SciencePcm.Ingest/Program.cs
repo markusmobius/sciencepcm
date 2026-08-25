@@ -56,6 +56,12 @@ internal static class Program
         var chunkOptions = new ChunkOptions(options.TargetWords, options.OverlapWords);
         var processed = 0;
 
+        // The corpora overlap: a preprint can appear in both biorxiv and biorxiv-supp, or
+        // as both a preprint and a PMC article, and ArticleKey is the same in each case.
+        // Without this the same passages are indexed twice under identical chunk ids.
+        var seenArticles = new System.Collections.Concurrent.ConcurrentDictionary<string, byte>(
+            StringComparer.Ordinal);
+
         await Parallel.ForEachAsync(
             files,
             new ParallelOptions { MaxDegreeOfParallelism = options.Threads },
@@ -79,6 +85,12 @@ internal static class Program
                     if (!parsed.Article.HasBody)
                     {
                         Interlocked.Increment(ref stats.SkippedNoBody);
+                        return;
+                    }
+
+                    if (!seenArticles.TryAdd(parsed.Article.ArticleKey, 0))
+                    {
+                        Interlocked.Increment(ref stats.SkippedDuplicate);
                         return;
                     }
 
@@ -115,6 +127,7 @@ internal static class Program
         Console.WriteLine($"Chunks written   : {stats.Chunks:N0}");
         Console.WriteLine($"Skipped (range)  : {stats.SkippedOutOfRange:N0}");
         Console.WriteLine($"Skipped (no body): {stats.SkippedNoBody:N0}");
+        Console.WriteLine($"Skipped (dup key): {stats.SkippedDuplicate:N0}");
         Console.WriteLine($"Failed           : {stats.Failed:N0}");
         Console.WriteLine($"Elapsed          : {stopwatch.Elapsed}");
         Console.WriteLine();
@@ -277,6 +290,7 @@ internal static class Program
                 skipped_out_of_range = stats.SkippedOutOfRange,
                 skipped_no_body = stats.SkippedNoBody,
                 skipped_not_article = stats.SkippedNotArticle,
+                skipped_duplicate_article_key = stats.SkippedDuplicate,
                 failed = stats.Failed,
             },
             elapsed_seconds = elapsed.TotalSeconds,
@@ -313,6 +327,7 @@ internal sealed class IngestStats
     public int SkippedOutOfRange;
     public int SkippedNoBody;
     public int SkippedNotArticle;
+    public int SkippedDuplicate;
     public int Failed;
 
     // Written only by the single-reader writer task.
