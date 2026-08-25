@@ -19,6 +19,7 @@
   button:hover { background: #336ccb; }
   button.secondary { background: #232833; border-color: #2b313b; }
   button:disabled { opacity: .5; cursor: default; }
+  button.icon { min-width: auto; padding: 7px 10px; background: #232833; border-color: #2b313b; }
   .status { font-size: 12px; padding: 3px 8px; border-radius: 10px; background: #2b313b; }
   .status.ok { background: #14532d; }
   .status.bad { background: #5c1b1b; }
@@ -40,12 +41,24 @@
   <h1>SciencePCM MCP console</h1>
   <div class="row">
     <div>
-      <label for="url">Server URL</label>
-      <input id="url" size="46" value="https://www.sciencemcp.econlabs.org/mcp">
+      <label for="server">Server</label>
+      <select id="server" style="min-width:170px">
+        <option value="https://www.sciencemcp.econlabs.org/mcp">SciencePCM</option>
+        <option value="https://www.academic.econlabs.org/mcp">Academic</option>
+        <option value="http://localhost:8080/mcp">Local (8080)</option>
+        <option value="custom">Custom...</option>
+      </select>
+    </div>
+    <div>
+      <label for="url">URL</label>
+      <input id="url" size="42">
     </div>
     <div>
       <label for="token">Bearer token</label>
-      <input id="token" type="password" size="34" placeholder="stored in localStorage">
+      <span style="display:inline-flex; gap:6px">
+        <input id="token" type="password" size="28" placeholder="stored per server">
+        <button id="reveal" class="icon" title="Show briefly">&#128065;</button>
+      </span>
     </div>
     <div>
       <label>&nbsp;</label>
@@ -91,21 +104,54 @@
 
 <script>
 const $ = id => document.getElementById(id);
-const store = {
-  get url()   { return localStorage.getItem('mcp.url') || $('url').value; },
-  get token() { return localStorage.getItem('mcp.token') || ''; },
-  set url(v)  { localStorage.setItem('mcp.url', v); },
-  set token(v){ localStorage.setItem('mcp.token', v); },
-};
+
+// Tokens are kept per server URL, so switching between servers does not send one
+// server's credential to another.
+const tokenKey = url => 'mcp.token:' + url;
 
 let sessionId = null;
 let nextId = 1;
 let selectedTool = null;
+let revealTimer = null;
 
-$('url').value = store.url;
-$('token').value = store.token;
-$('url').addEventListener('change', e => store.url = e.target.value);
-$('token').addEventListener('change', e => store.token = e.target.value);
+function loadServer(url) {
+  $('url').value = url;
+  $('token').value = localStorage.getItem(tokenKey(url)) || '';
+  localStorage.setItem('mcp.lastUrl', url);
+  sessionId = null;
+  setStatus('not connected');
+  $('search').disabled = true;
+}
+
+function initServerPicker() {
+  const last = localStorage.getItem('mcp.lastUrl') || $('server').value;
+  const known = [...$('server').options].some(o => o.value === last);
+
+  $('server').value = known ? last : 'custom';
+  $('url').readOnly = known;
+  loadServer(last);
+
+  $('server').addEventListener('change', () => {
+    const choice = $('server').value;
+    if (choice === 'custom') {
+      $('url').readOnly = false;
+      $('url').focus();
+      return;
+    }
+    $('url').readOnly = true;
+    loadServer(choice);
+  });
+
+  $('url').addEventListener('change', () => loadServer($('url').value.trim()));
+  $('token').addEventListener('change', () =>
+    localStorage.setItem(tokenKey($('url').value), $('token').value));
+}
+
+$('reveal').onclick = () => {
+  clearTimeout(revealTimer);
+  $('token').type = 'text';
+  revealTimer = setTimeout(() => $('token').type = 'password', 3000);
+};
 
 function log(label, payload) {
   const stamp = new Date().toLocaleTimeString();
@@ -160,6 +206,7 @@ async function rpc(method, params, isNotification = false) {
 
 async function connect() {
   sessionId = null;
+  localStorage.setItem(tokenKey($('url').value), $('token').value);
   setStatus('connecting...');
   try {
     const init = await rpc('initialize', {
@@ -173,10 +220,12 @@ async function connect() {
 
     const tools = await rpc('tools/list', {});
     log('tools/list', tools);
-    renderTools(tools.result?.tools || []);
+    const available = tools.result?.tools || [];
+    renderTools(available);
 
     setStatus('connected', 'ok');
-    $('search').disabled = false;
+    // Quick search is SciencePCM-specific; other servers expose different tools.
+    $('search').disabled = !available.some(t => t.name === 'search_literature');
   } catch (error) {
     setStatus('failed', 'bad');
     log('error', error.message);
@@ -279,6 +328,8 @@ $('call').onclick = async () => {
     log('error', error.message);
   }
 };
+
+initServerPicker();
 </script>
 </body>
 </html>
