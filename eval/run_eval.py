@@ -28,8 +28,9 @@ from metrics import MetricAccumulator, format_summary
 
 class Retriever(ABC):
     @abstractmethod
-    def search(self, query: str, k: int) -> list[str]:
-        """Return article keys, best first."""
+    def search(self, record: dict, k: int) -> list[str]:
+        """Return article keys, best first. Takes the whole qrels record because a
+        precomputed run is keyed by query_id, not by the query text."""
 
 
 class DuckDbBm25Retriever(Retriever):
@@ -91,7 +92,7 @@ class DuckDbBm25Retriever(Retriever):
     def for_thread(self) -> "DuckDbBm25Retriever":
         return DuckDbBm25Retriever(connection=self.connection.cursor())
 
-    def search(self, query: str, k: int) -> list[str]:
+    def search(self, record: dict, k: int) -> list[str]:
         rows = self.connection.execute(
             """
             SELECT DocKey, MAX(score) AS best
@@ -104,7 +105,7 @@ class DuckDbBm25Retriever(Retriever):
             ORDER BY best DESC
             LIMIT ?
             """,
-            [query, k],
+            [record["query_text"], k],
         ).fetchall()
         return [str(row[0]) for row in rows]
 
@@ -118,11 +119,40 @@ class HttpRetriever(Retriever):
         if token:
             self.session.headers["Authorization"] = f"Bearer {token}"
 
-    def search(self, query: str, k: int) -> list[str]:
-        response = self.session.post(self.endpoint, json={"query": query, "k": k}, timeout=30)
+    def search(self, record: dict, k: int) -> list[str]:
+        response = self.session.post(
+            self.endpoint, json={"query": record["query_text"], "k": k}, timeout=30
+        )
         response.raise_for_status()
         payload = response.json()
         return [hit["article_key"] for hit in payload.get("results", [])]
+
+
+class RunFileRetriever(Retriever):
+    """Replays a run file produced by SciencePcm.Search.
+
+    Keeping retrieval in C# is deliberate: the query must be tokenised by the same
+    implementation that built the index, so scoring reads results rather than
+    reproducing the encoder in Python.
+    """
+
+    def __init__(self, path: Path) -> None:
+        self.runs: dict[str, list[str]] = {}
+        with path.open(encoding="utf-8") as stream:
+            for line in stream:
+                if not line.strip():
+                    continue
+                record = json.loads(line)
+                self.runs[str(record["query_id"])] = record["hits"]
+
+    def search(self, record: dict, k: int) -> list[str]:
+        query_id = str(record["query_id"])
+        if query_id not in self.runs:
+            raise KeyError(
+                f"query_id {query_id} is missing from the run file. "
+                "The run and the qrels must come from the same query set."
+            )
+        return self.runs[query_id][:k]
 
 
 def load_qrels(path: Path, limit: int | None) -> list[dict]:
@@ -134,7 +164,10 @@ def load_qrels(path: Path, limit: int | None) -> list[dict]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--qrels", required=True, type=Path)
-    parser.add_argument("--retriever", choices=["duckdb-bm25", "http"], default="duckdb-bm25")
+    parser.add_argument(
+        "--retriever", choices=["duckdb-bm25", "http", "runfile"], default="duckdb-bm25"
+    )
+    parser.add_argument("--run", type=Path, help="Run file from SciencePcm.Search (runfile)")
     parser.add_argument("--chunks", help="Glob for the document Parquet (duckdb-bm25)")
     parser.add_argument("--id-column", default="ChunkId")
     parser.add_argument("--key-column", default="ArticleKey")
@@ -178,6 +211,11 @@ def main() -> int:
             duckdb_threads=args.duckdb_threads,
         )
         name = f"duckdb-bm25:{args.text_column}"
+    elif args.retriever == "runfile":
+        if not args.run:
+            parser.error("--run is required for runfile")
+        retriever = RunFileRetriever(args.run)
+        name = f"runfile:{args.run.name}"
     else:
         if not args.endpoint:
             parser.error("--endpoint is required for http")
@@ -193,7 +231,7 @@ def main() -> int:
         for index, record in enumerate(qrels, start=1):
             gold = set(record["gold_article_keys"])
             started = time.perf_counter()
-            ranked = retriever.search(record["query_text"], args.k)
+            ranked = retriever.search(record, args.k)
             latency_ms = (time.perf_counter() - started) * 1000
             accumulator.add(ranked, gold, latency_ms)
 
@@ -208,7 +246,7 @@ def main() -> int:
         def search(record: dict) -> tuple[dict, list[str]]:
             if not hasattr(local, "retriever"):
                 local.retriever = retriever.for_thread()
-            return record, local.retriever.search(record["query_text"], args.k)
+            return record, local.retriever.search(record, args.k)
 
         with ThreadPoolExecutor(max_workers=args.workers) as pool:
             futures = [pool.submit(search, record) for record in qrels]
