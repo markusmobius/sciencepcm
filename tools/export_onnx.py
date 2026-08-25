@@ -1,11 +1,15 @@
-"""Export MedCPT encoders to ONNX for the C# inference path.
+"""Export MedCPT models to ONNX for the C# inference path.
 
 MedCPT is a *dual* encoder: articles and queries use different weights. Both are
 exported. Confusing them produces plausible-looking but badly degraded retrieval.
 
+The cross-encoder is a third, different shape: it takes a query/passage PAIR and emits
+a single relevance logit rather than an embedding, so it exports with a
+sequence-classification head and a `logits` output whose only dynamic axis is batch.
+
 Uses torch.onnx.export directly rather than optimum, which churns its API between
-majors, and so the ONNX graph gets exactly the names the C# embedder binds to:
-input_ids / attention_mask / token_type_ids -> last_hidden_state.
+majors, and so the ONNX graph gets exactly the names the C# side binds to:
+input_ids / attention_mask / token_type_ids -> last_hidden_state (or logits).
 
 Two checks run automatically:
   * numerical parity between PyTorch and ONNX Runtime on the probe texts
@@ -23,6 +27,7 @@ from pathlib import Path
 
 ARTICLE_MODEL = "ncbi/MedCPT-Article-Encoder"
 QUERY_MODEL = "ncbi/MedCPT-Query-Encoder"
+CROSS_MODEL = "ncbi/MedCPT-Cross-Encoder"
 
 # Deliberately awkward: hyphenation, Greek letters, gene symbols, superscripts, casing.
 PROBE_TEXTS = [
@@ -36,9 +41,20 @@ PROBE_TEXTS = [
 
 INPUT_NAMES = ["input_ids", "attention_mask", "token_type_ids"]
 OUTPUT_NAME = "last_hidden_state"
+CROSS_OUTPUT_NAME = "logits"
+
+# Query/passage pairs for the cross-encoder probes; one clear match per obvious mismatch.
+PROBE_PAIRS = [
+    ("What causes Friedreich's ataxia?", "Friedreich ataxia is caused by a GAA repeat expansion in FXN."),
+    ("What causes Friedreich's ataxia?", "Wind turbine siting and its effect on local bird populations."),
+    ("role of microglia in synaptic pruning", "Microglia engulf synapses via complement C1q and C3 during development."),
+    ("role of microglia in synaptic pruning", "A survey of undergraduate attitudes to online lecture capture."),
+    ("long COVID definition", "Post-acute sequelae of SARS-CoV-2 persisting beyond twelve weeks."),
+    ("GDF15 expression increased in which states", "GDF15 rises with nutritional stress, pregnancy and metformin use."),
+]
 
 
-def build_wrapper(model):
+def build_wrapper(model, kind: str = "encoder"):
     import torch
 
     class Encoder(torch.nn.Module):
@@ -54,36 +70,60 @@ def build_wrapper(model):
                 attention_mask=attention_mask,
                 token_type_ids=token_type_ids,
             )
-            return output.last_hidden_state
+            return output.logits if kind == "cross" else output.last_hidden_state
 
     return Encoder(model).eval()
 
 
-def export(model_id: str, destination: Path, max_tokens: int, opset: int) -> None:
+def encode_probes(tokenizer, kind: str, texts_or_pairs, max_length: int, pad_to_max: bool):
+    padding = "max_length" if pad_to_max else True
+    if kind == "cross":
+        return tokenizer(
+            [p[0] for p in texts_or_pairs],
+            [p[1] for p in texts_or_pairs],
+            padding=padding,
+            truncation=True,
+            max_length=max_length,
+            return_tensors="pt",
+        )
+    return tokenizer(
+        texts_or_pairs,
+        padding=padding,
+        truncation=True,
+        max_length=max_length,
+        return_tensors="pt",
+    )
+
+
+def export(model_id: str, destination: Path, max_tokens: int, opset: int, kind: str = "encoder") -> None:
     import numpy as np
     import onnxruntime as ort
     import torch
-    from transformers import AutoModel, AutoTokenizer
+    from transformers import AutoModel, AutoModelForSequenceClassification, AutoTokenizer
 
     destination.mkdir(parents=True, exist_ok=True)
     print(f"Exporting {model_id} -> {destination}")
 
     tokenizer = AutoTokenizer.from_pretrained(model_id)
-    model = AutoModel.from_pretrained(model_id).eval()
-    wrapper = build_wrapper(model)
+    if kind == "cross":
+        model = AutoModelForSequenceClassification.from_pretrained(model_id).eval()
+        output_name = CROSS_OUTPUT_NAME
+        probes = PROBE_PAIRS
+    else:
+        model = AutoModel.from_pretrained(model_id).eval()
+        output_name = OUTPUT_NAME
+        probes = PROBE_TEXTS
 
-    encoded = tokenizer(
-        PROBE_TEXTS[:2],
-        padding="max_length",
-        truncation=True,
-        max_length=64,
-        return_tensors="pt",
-    )
+    wrapper = build_wrapper(model, kind)
+
+    encoded = encode_probes(tokenizer, kind, probes[:2], 64, pad_to_max=True)
     args = (encoded["input_ids"], encoded["attention_mask"], encoded["token_type_ids"])
 
     onnx_path = destination / "model.onnx"
     dynamic_axes = {name: {0: "batch", 1: "sequence"} for name in INPUT_NAMES}
-    dynamic_axes[OUTPUT_NAME] = {0: "batch", 1: "sequence"}
+    # The cross-encoder collapses the sequence into one score per pair, so batch is the
+    # only axis that varies on its output.
+    dynamic_axes[output_name] = {0: "batch"} if kind == "cross" else {0: "batch", 1: "sequence"}
 
     kwargs = {}
     if "dynamo" in inspect.signature(torch.onnx.export).parameters:
@@ -95,7 +135,7 @@ def export(model_id: str, destination: Path, max_tokens: int, opset: int) -> Non
             args,
             str(onnx_path),
             input_names=INPUT_NAMES,
-            output_names=[OUTPUT_NAME],
+            output_names=[output_name],
             dynamic_axes=dynamic_axes,
             opset_version=opset,
             do_constant_folding=True,
@@ -108,13 +148,7 @@ def export(model_id: str, destination: Path, max_tokens: int, opset: int) -> Non
     # Deliberately a different batch size and sequence length from the export sample:
     # TorchScript tracing can bake shapes in as constants, and reusing the export
     # inputs would hide exactly that failure.
-    verify = tokenizer(
-        PROBE_TEXTS,
-        padding=True,
-        truncation=True,
-        max_length=max_tokens,
-        return_tensors="pt",
-    )
+    verify = encode_probes(tokenizer, kind, probes, max_tokens, pad_to_max=False)
     verify_args = (verify["input_ids"], verify["attention_mask"], verify["token_type_ids"])
     print(f"  export shape {tuple(args[0].shape)} -> verify shape {tuple(verify_args[0].shape)}")
 
@@ -123,7 +157,7 @@ def export(model_id: str, destination: Path, max_tokens: int, opset: int) -> Non
 
     session = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
     actual = session.run(
-        [OUTPUT_NAME],
+        [output_name],
         {name: verify_args[i].numpy() for i, name in enumerate(INPUT_NAMES)},
     )[0]
 
@@ -137,6 +171,14 @@ def export(model_id: str, destination: Path, max_tokens: int, opset: int) -> Non
     print(f"  torch vs onnxruntime max abs diff: {drift:.2e}")
     if drift > 1e-3:
         raise RuntimeError(f"ONNX export diverges from PyTorch (max abs diff {drift:.2e}).")
+
+    if kind == "cross":
+        # Odd probes are deliberate mismatches, so scores must alternate down.
+        scores = actual.reshape(-1).tolist()
+        for i in range(0, min(4, len(scores)), 2):
+            print(f"  probe {i//2}: match {scores[i]:+.3f} vs mismatch {scores[i+1]:+.3f}")
+            if scores[i] <= scores[i + 1]:
+                raise RuntimeError("Cross-encoder scored a mismatched pair above its match.")
 
     size_mb = onnx_path.stat().st_size / 1024 / 1024
     print(f"  wrote: model.onnx ({size_mb:,.0f} MB), vocab.txt")
@@ -158,23 +200,41 @@ def write_vocab(tokenizer, destination: Path) -> None:
             stream.write(token + "\n")
 
 
-def write_parity(model_id: str, destination: Path, max_tokens: int) -> None:
+def write_parity(model_id: str, destination: Path, max_tokens: int, kind: str = "encoder") -> None:
     from transformers import AutoTokenizer
 
     tokenizer = AutoTokenizer.from_pretrained(model_id)
     samples = []
-    for text in PROBE_TEXTS:
-        ids = tokenizer.encode(text, add_special_tokens=True, truncation=True, max_length=max_tokens)
-        samples.append(
-            {
-                "text": text,
-                "ids": ids,
-                "tokens": tokenizer.convert_ids_to_tokens(ids),
-            }
-        )
+
+    if kind == "cross":
+        # FastBertTokenizer has no pair overload, so the C# reranker assembles
+        # [CLS] query [SEP] passage [SEP] by hand. Capture token_type_ids too: getting
+        # the segment boundary wrong is silent and would quietly degrade every score.
+        for query, passage in PROBE_PAIRS:
+            encoded = tokenizer(query, passage, truncation=True, max_length=max_tokens)
+            samples.append(
+                {
+                    "query": query,
+                    "passage": passage,
+                    "ids": encoded["input_ids"],
+                    "token_type_ids": encoded["token_type_ids"],
+                    "tokens": tokenizer.convert_ids_to_tokens(encoded["input_ids"]),
+                }
+            )
+    else:
+        for text in PROBE_TEXTS:
+            ids = tokenizer.encode(text, add_special_tokens=True, truncation=True, max_length=max_tokens)
+            samples.append(
+                {
+                    "text": text,
+                    "ids": ids,
+                    "tokens": tokenizer.convert_ids_to_tokens(ids),
+                }
+            )
 
     payload = {
         "model_id": model_id,
+        "kind": kind,
         "max_tokens": max_tokens,
         "lower_case": bool(getattr(tokenizer, "do_lower_case", True)),
         "samples": samples,
@@ -190,20 +250,26 @@ def main() -> int:
     parser.add_argument("--out", required=True, type=Path, help="Root directory for exported models.")
     parser.add_argument("--max-tokens", type=int, default=512)
     parser.add_argument("--opset", type=int, default=17)
-    parser.add_argument("--article-only", action="store_true", help="Skip the query encoder.")
+    parser.add_argument("--article-only", action="store_true", help="Skip the query and cross encoders.")
+    parser.add_argument("--cross-only", action="store_true", help="Export only the cross-encoder.")
     args = parser.parse_args()
 
-    targets = [(ARTICLE_MODEL, args.out / "medcpt-article")]
-    if not args.article_only:
-        targets.append((QUERY_MODEL, args.out / "medcpt-query"))
+    if args.cross_only:
+        targets = [(CROSS_MODEL, args.out / "medcpt-cross", "cross")]
+    else:
+        targets = [(ARTICLE_MODEL, args.out / "medcpt-article", "encoder")]
+        if not args.article_only:
+            targets.append((QUERY_MODEL, args.out / "medcpt-query", "encoder"))
+            targets.append((CROSS_MODEL, args.out / "medcpt-cross", "cross"))
 
-    for model_id, destination in targets:
-        export(model_id, destination, args.max_tokens, args.opset)
-        write_parity(model_id, destination, args.max_tokens)
+    for model_id, destination, kind in targets:
+        export(model_id, destination, args.max_tokens, args.opset, kind)
+        write_parity(model_id, destination, args.max_tokens, kind)
 
     print()
     print("Point SciencePcm.Embed --model at medcpt-article for the corpus,")
     print("and at medcpt-query when embedding search queries.")
+    print("medcpt-cross scores query/passage pairs and outputs 'logits', not embeddings.")
     return 0
 
 
