@@ -78,11 +78,10 @@ async def judge_pairs(pairs, texts, questions, model, workers):
     grades: dict[str, int] = {}
     done = 0
     errors = 0
-    cached = 0
     lock = asyncio.Lock()
 
     async def worker():
-        nonlocal done, errors, cached
+        nonlocal done, errors
         client = await factory.create_client()
         try:
             while True:
@@ -106,8 +105,6 @@ async def judge_pairs(pairs, texts, questions, model, workers):
                     if output.error is not None:
                         errors += 1
                     else:
-                        if output.isCached:
-                            cached += 1
                         try:
                             parsed = json.loads(output.answer.ChatAnswer)
                             grades[f"{query_id}|{key}"] = int(parsed["relevance"])
@@ -115,12 +112,12 @@ async def judge_pairs(pairs, texts, questions, model, workers):
                             errors += 1
 
                     if done % 200 == 0:
-                        print(f"  judged {done:,}/{len(pairs):,}  ({errors} errors, {cached:,} served from cache)")
+                        print(f"  judged {done:,}/{len(pairs):,}  ({errors} errors)")
         finally:
             await client.Close()
 
     await asyncio.gather(*[worker() for _ in range(workers)])
-    print(f"  judged {done:,}/{len(pairs):,}  ({errors} errors, {cached:,} served from cache)")
+    print(f"  judged {done:,}/{len(pairs):,}  ({errors} errors)")
     return grades
 
 
