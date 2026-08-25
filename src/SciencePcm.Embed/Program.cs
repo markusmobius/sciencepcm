@@ -218,6 +218,25 @@ internal static class Program
     {
         Directory.CreateDirectory(options.OutputDirectory);
 
+        // Resume reads the ids already written so the corpus can be finished rather than
+        // restarted. Completed shards are self-consistent because each vector and its id
+        // are written together.
+        var alreadyDone = new HashSet<string>(StringComparer.Ordinal);
+        var startShard = 0;
+        if (options.Resume)
+        {
+            foreach (var path in Directory.EnumerateFiles(options.OutputDirectory, "ids-part-*.txt")
+                         .OrderBy(p => p, StringComparer.Ordinal))
+            {
+                foreach (var line in File.ReadLines(path))
+                {
+                    if (line.Length > 0) alreadyDone.Add(line);
+                }
+                startShard++;
+            }
+            Console.WriteLine($"Resuming: {alreadyDone.Count:N0} vectors already written across {startShard} shard(s)");
+        }
+
         var embedders = CreateEmbedders(options, out var dimensions);
         Console.WriteLine($"Model loaded: {dimensions} dimensions, pooling={options.Pooling}, normalize={options.Normalize}");
         Console.WriteLine($"workers={options.Workers}  intra-threads={options.IntraOpThreads}  batch={options.BatchSize}");
@@ -271,6 +290,8 @@ internal static class Program
             await foreach (var record in ParquetTextSource.ReadAsync(
                                options.Input, options.Schema, options.IncludeTitle))
             {
+                if (alreadyDone.Count > 0 && alreadyDone.Contains(record.Id)) continue;
+
                 buffer.Add(record);
                 seen++;
 
@@ -305,10 +326,20 @@ internal static class Program
             }
         })).ToArray();
 
-        var writer = Task.Run(() => WriteAsync(resultChannel.Reader, options, dimensions));
+        var writer = Task.Run(() => WriteAsync(resultChannel.Reader, options, dimensions, startShard));
 
         await producer;
-        await Task.WhenAll(workers);
+
+        // If the writer faults, the bounded result channel fills and every worker blocks
+        // forever. Watching both means the failure surfaces instead of hanging.
+        var allWorkers = Task.WhenAll(workers);
+        var finished = await Task.WhenAny(allWorkers, writer);
+        if (finished == writer && writer.IsFaulted)
+        {
+            await writer;
+        }
+        await allWorkers;
+
         resultChannel.Writer.Complete();
         var (shards, written) = await writer;
 
@@ -349,9 +380,10 @@ internal static class Program
     private static async Task<(int Shards, long Written)> WriteAsync(
         ChannelReader<(string[] Ids, float[][] Vectors)> reader,
         Options options,
-        int dimensions)
+        int dimensions,
+        int startShard = 0)
     {
-        var shard = 0;
+        var shard = startShard;
         long written = 0;
         var inShard = 0;
 
@@ -504,6 +536,8 @@ internal sealed class Options
                                  cuts padding waste. 0 disables. Default: 65536
           --no-sort              Disable length-sorted batching.
           --limit <n>            Stop after n texts.
+          --resume               Skip ids already present in the output directory and
+                                 append new shards. Use after an interrupted run.
           --benchmark            Measure throughput and project full-corpus time.
           --benchmark-texts <n>  Sample size for --benchmark. Default: 5000
 
@@ -538,6 +572,7 @@ internal sealed class Options
     public int SortBuffer { get; private set; } = 65_536;
     public bool SortBatches { get; private set; } = true;
     public int? Limit { get; private set; }
+    public bool Resume { get; private set; }
     public bool Benchmark { get; private set; }
     public bool Gpu { get; private set; }
     public int GpuDevice { get; private set; }
@@ -600,6 +635,7 @@ internal sealed class Options
                 case "--sort-buffer": options.SortBuffer = int.Parse(Next()); break;
                 case "--no-sort": options.SortBatches = false; break;
                 case "--limit": options.Limit = int.Parse(Next()); break;
+                case "--resume": options.Resume = true; break;
                 case "--benchmark": options.Benchmark = true; break;
                 case "--gpu": options.Gpu = true; break;
                 case "--gpu-device": options.GpuDevice = int.Parse(Next()); break;
