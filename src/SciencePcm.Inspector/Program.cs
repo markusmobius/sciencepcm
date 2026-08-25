@@ -58,7 +58,6 @@ app.MapPost("/proxy", async (HttpRequest request, HttpResponse response, IHttpCl
     await response.WriteAsync(await result.Content.ReadAsStringAsync());
 });
 
-var url = app.Configuration["urls"] ?? "http://localhost:5173";
 Console.WriteLine($"MCP console listening on {url}");
 Console.WriteLine("Proxy mode forwards to any server; direct mode needs CORS on that server.");
 
