@@ -6,6 +6,11 @@
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddHttpClient("mcp").ConfigureHttpClient(c => c.Timeout = TimeSpan.FromMinutes(10));
 
+// launchSettings.json only applies to `dotnet run`, so a published build would
+// otherwise fall back to the framework default of :5000.
+var url = builder.Configuration["urls"] ?? "http://localhost:5173";
+builder.WebHost.UseUrls(url);
+
 var app = builder.Build();
 
 app.UseDefaultFiles();
@@ -54,7 +59,7 @@ app.MapPost("/proxy", async (HttpRequest request, HttpResponse response, IHttpCl
 });
 
 var url = app.Configuration["urls"] ?? "http://localhost:5173";
-Console.WriteLine($"MCP console: {url}");
+Console.WriteLine($"MCP console listening on {url}");
 Console.WriteLine("Proxy mode forwards to any server; direct mode needs CORS on that server.");
 
 app.Run();
