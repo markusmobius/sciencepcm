@@ -16,6 +16,8 @@ public sealed record LexicalHit(
     string Body,
     int Year,
     string Pmid,
+    string Section,
+    bool IsRetracted,
     float Score);
 
 /// <summary>
@@ -35,31 +37,47 @@ public static class LexicalIndex
     public const string TitleField = "title";
     public const string YearField = "year";
     public const string PmidField = "pmid";
+    public const string SectionField = "section";
+    public const string RetractedField = "retracted";
     public const string SearchField = "body_search";
 
     /// <summary>Stemming and stopword removal matter more than exact term matching here.</summary>
     public static Analyzer CreateAnalyzer() => new EnglishAnalyzer(Version);
 
-    public static Document CreateDocument(string id, string articleKey, string title, string body, int year, string pmid)
+    public static Document CreateDocument(ArticleDocument source)
     {
         var document = new Document
         {
-            new StringField(IdField, id, Field.Store.YES),
-            new StringField(KeyField, articleKey, Field.Store.YES),
-            new StoredField(TitleField, title),
-            new StoredField(BodyField, body),
+            new StringField(IdField, source.Id, Field.Store.YES),
+            new StringField(KeyField, source.ArticleKey, Field.Store.YES),
+            new StoredField(TitleField, source.Title),
+            new StoredField(BodyField, source.Body),
             // The searchable copy carries the title, which is where much of the signal is.
-            new TextField(SearchField, string.IsNullOrEmpty(title) ? body : title + ". " + body, Field.Store.NO),
+            new TextField(
+                SearchField,
+                string.IsNullOrEmpty(source.Title) ? source.Body : source.Title + ". " + source.Body,
+                Field.Store.NO),
         };
 
-        if (year > 0)
+        if (source.Year > 0)
         {
-            document.Add(new Int32Field(YearField, year, Field.Store.YES));
+            document.Add(new Int32Field(YearField, source.Year, Field.Store.YES));
         }
 
-        if (!string.IsNullOrEmpty(pmid))
+        if (!string.IsNullOrEmpty(source.Pmid))
         {
-            document.Add(new StringField(PmidField, pmid, Field.Store.YES));
+            document.Add(new StringField(PmidField, source.Pmid, Field.Store.YES));
+        }
+
+        if (!string.IsNullOrEmpty(source.Section))
+        {
+            // Lowercased and unanalysed so a section filter is an exact term match.
+            document.Add(new StringField(SectionField, source.Section.ToLowerInvariant(), Field.Store.YES));
+        }
+
+        if (source.IsRetracted)
+        {
+            document.Add(new StringField(RetractedField, "true", Field.Store.YES));
         }
 
         return document;
@@ -71,6 +89,17 @@ public static class LexicalIndex
         return hash < 0 ? id : id[..hash];
     }
 }
+
+/// <summary>What the index needs from one document, whether abstract or passage.</summary>
+public sealed record ArticleDocument(
+    string Id,
+    string ArticleKey,
+    string Title,
+    string Body,
+    int Year,
+    string Pmid,
+    string Section,
+    bool IsRetracted);
 
 public sealed class LexicalSearcher : IDisposable
 {
@@ -91,7 +120,13 @@ public sealed class LexicalSearcher : IDisposable
 
     public int Count => _reader.NumDocs;
 
-    public List<LexicalHit> Search(string query, int k, int? yearMin = null, int? yearMax = null)
+    public List<LexicalHit> Search(
+        string query,
+        int k,
+        int? yearMin = null,
+        int? yearMax = null,
+        string? section = null,
+        bool includeRetracted = true)
     {
         // Built through the analyzer rather than a query parser, so that punctuation in a
         // natural-language question cannot throw a syntax error.
@@ -100,13 +135,32 @@ public sealed class LexicalSearcher : IDisposable
         if (parsed is null) return [];
 
         Query effective = parsed;
-        if (yearMin is not null || yearMax is not null)
+        var needsFilter = yearMin is not null || yearMax is not null
+            || !string.IsNullOrWhiteSpace(section) || !includeRetracted;
+
+        if (needsFilter)
         {
-            var combined = new BooleanQuery
+            var combined = new BooleanQuery { { parsed, Occur.MUST } };
+
+            if (yearMin is not null || yearMax is not null)
             {
-                { parsed, Occur.MUST },
-                { NumericRangeQuery.NewInt32Range(LexicalIndex.YearField, yearMin, yearMax, true, true), Occur.MUST },
-            };
+                combined.Add(
+                    NumericRangeQuery.NewInt32Range(LexicalIndex.YearField, yearMin, yearMax, true, true),
+                    Occur.MUST);
+            }
+
+            if (!string.IsNullOrWhiteSpace(section))
+            {
+                combined.Add(
+                    new TermQuery(new Term(LexicalIndex.SectionField, section.ToLowerInvariant())),
+                    Occur.MUST);
+            }
+
+            if (!includeRetracted)
+            {
+                combined.Add(new TermQuery(new Term(LexicalIndex.RetractedField, "true")), Occur.MUST_NOT);
+            }
+
             effective = combined;
         }
 
@@ -131,6 +185,8 @@ public sealed class LexicalSearcher : IDisposable
             document.Get(LexicalIndex.BodyField) ?? "",
             int.TryParse(year, out var parsed) ? parsed : 0,
             document.Get(LexicalIndex.PmidField) ?? "",
+            document.Get(LexicalIndex.SectionField) ?? "",
+            document.Get(LexicalIndex.RetractedField) == "true",
             score);
     }
 
@@ -154,6 +210,13 @@ public sealed class LexicalSearcher : IDisposable
     public LexicalHit? GetByKey(string key)
     {
         var top = _searcher.Search(new TermQuery(new Term(LexicalIndex.KeyField, key)), 1);
+        return top.ScoreDocs.Length == 0 ? null : ToHit(_searcher.Doc(top.ScoreDocs[0].Doc), 0f);
+    }
+
+    /// <summary>Exact lookup by document id, for walking to neighbouring passages.</summary>
+    public LexicalHit? GetById(string id)
+    {
+        var top = _searcher.Search(new TermQuery(new Term(LexicalIndex.IdField, id)), 1);
         return top.ScoreDocs.Length == 0 ? null : ToHit(_searcher.Doc(top.ScoreDocs[0].Doc), 0f);
     }
 

@@ -7,7 +7,15 @@ namespace SciencePcm.Embed;
 public sealed record TextRecord(string Id, string Text);
 
 /// <summary>Title and body kept apart, plus the fields the server displays and filters on.</summary>
-public sealed record ArticleRecord(string Id, string Title, string Body, int Year, string Pmid);
+public sealed record ArticleRecord(
+    string Id,
+    string ArticleKey,
+    string Title,
+    string Body,
+    int Year,
+    string Pmid,
+    string Section,
+    bool IsRetracted);
 
 public enum CorpusSchema
 {
@@ -53,6 +61,19 @@ public static class ParquetTextSource
         public string? @abstract { get; set; }
         public int? publication_year { get; set; }
         public string? pmid { get; set; }
+    }
+
+    // IsRetracted is a non-nullable bool in ChunkRow, so it is required here too;
+    // Parquet.Net throws if the nullability does not match the file exactly.
+    private sealed class ChunkMetaRow
+    {
+        public string? ChunkId { get; set; }
+        public string? ArticleKey { get; set; }
+        public string? SectionKind { get; set; }
+        public string? Text { get; set; }
+        public string? Title { get; set; }
+        public int? PubYear { get; set; }
+        public bool IsRetracted { get; set; }
     }
 
     public static IEnumerable<string> ExpandGlob(string glob)
@@ -130,18 +151,29 @@ public static class ParquetTextSource
                     if (string.IsNullOrEmpty(row.openalex_id) || string.IsNullOrWhiteSpace(row.@abstract)) continue;
                     yield return new ArticleRecord(
                         row.openalex_id,
+                        row.openalex_id,
                         row.title ?? "",
                         row.@abstract!,
                         row.publication_year ?? 0,
-                        row.pmid ?? "");
+                        row.pmid ?? "",
+                        Section: "",
+                        IsRetracted: false);
                 }
             }
             else
             {
-                foreach (var row in (await ParquetSerializer.DeserializeAsync<ChunkTextRow>(stream)).Data)
+                foreach (var row in (await ParquetSerializer.DeserializeAsync<ChunkMetaRow>(stream)).Data)
                 {
                     if (string.IsNullOrEmpty(row.ChunkId) || string.IsNullOrWhiteSpace(row.Text)) continue;
-                    yield return new ArticleRecord(row.ChunkId!, row.Title ?? "", row.Text!, 0, "");
+                    yield return new ArticleRecord(
+                        row.ChunkId!,
+                        row.ArticleKey ?? row.ChunkId!,
+                        row.Title ?? "",
+                        row.Text!,
+                        row.PubYear ?? 0,
+                        Pmid: "",
+                        row.SectionKind ?? "",
+                        row.IsRetracted);
                 }
             }
         }

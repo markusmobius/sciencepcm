@@ -67,9 +67,15 @@ public static class Program
             // building separate indexes that would then need merging.
             foreach (var record in queue.GetConsumingEnumerable())
             {
-                var key = LexicalIndex.ArticleKeyOf(record.Id);
-                writer.AddDocument(LexicalIndex.CreateDocument(
-                    record.Id, key, record.Title, record.Body, record.Year, record.Pmid));
+                writer.AddDocument(LexicalIndex.CreateDocument(new ArticleDocument(
+                    record.Id,
+                    record.ArticleKey,
+                    record.Title,
+                    record.Body,
+                    record.Year,
+                    record.Pmid,
+                    record.Section,
+                    record.IsRetracted)));
 
                 var count = Interlocked.Increment(ref indexed);
                 if (count % 500_000 == 0)

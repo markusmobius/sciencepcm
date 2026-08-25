@@ -29,6 +29,7 @@ var options = new ServerOptions
 {
     IndexPath = index,
     CrossEncoderPath = crossEncoder,
+    PassageIndexPath = builder.Configuration["passage-index"],
     RerankCandidates = builder.Configuration.GetValue("rerank-candidates", 100),
     RerankBatch = builder.Configuration.GetValue("rerank-batch", 32),
     Threads = builder.Configuration.GetValue("threads", 8),
@@ -88,6 +89,7 @@ app.MapGet("/health", (RetrievalService retrieval) => Results.Ok(new
 {
     status = "ok",
     documents = retrieval.DocumentCount,
+    passages = retrieval.PassageCount,
 }));
 
 app.MapMcp("/mcp");
@@ -96,6 +98,7 @@ app.MapMcp("/mcp");
 // the first request, and pays the model load before anyone is waiting.
 var warmup = app.Services.GetRequiredService<RetrievalService>();
 Console.WriteLine($"index          : {options.IndexPath} ({warmup.DocumentCount:N0} documents)");
+Console.WriteLine($"passage index  : {options.PassageIndexPath ?? "(none)"} ({warmup.PassageCount:N0} passages)");
 Console.WriteLine($"cross-encoder  : {options.CrossEncoderPath} (gpu={options.UseGpu})");
 Console.WriteLine($"rerank depth   : {options.RerankCandidates}");
 Console.WriteLine($"auth           : {(string.IsNullOrEmpty(token) ? "OPEN - no token set" : "bearer token required")}");
