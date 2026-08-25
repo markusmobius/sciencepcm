@@ -44,7 +44,7 @@
       <label for="server">Server</label>
       <select id="server" style="min-width:170px">
         <option value="https://www.sciencemcp.econlabs.org/mcp">SciencePCM</option>
-        <option value="https://www.academic.econlabs.org/mcp">Academic</option>
+        <option value="https://www.academic.econlabs.org/mcp">EconMCP</option>
         <option value="http://localhost:8080/mcp">Local (8080)</option>
         <option value="custom">Custom...</option>
       </select>
@@ -63,6 +63,12 @@
     <div>
       <label>&nbsp;</label>
       <button id="connect">Connect</button>
+    </div>
+    <div>
+      <label>&nbsp;</label>
+      <label class="hint" style="margin:0" title="Forward through this app instead of calling the server directly from the browser">
+        <input type="checkbox" id="viaProxy" checked style="min-width:auto"> via proxy
+      </label>
     </div>
     <div>
       <label>&nbsp;</label>
@@ -165,17 +171,21 @@ function setStatus(text, kind) {
 }
 
 async function rpc(method, params, isNotification = false) {
+  const target = $('url').value;
+  const viaProxy = $('viaProxy').checked;
+
   const headers = {
     'Content-Type': 'application/json',
     'Accept': 'application/json, text/event-stream',
   };
   if ($('token').value) headers['Authorization'] = 'Bearer ' + $('token').value;
   if (sessionId) headers['Mcp-Session-Id'] = sessionId;
+  if (viaProxy) headers['X-Target-Url'] = target;
 
   const body = { jsonrpc: '2.0', method, params };
   if (!isNotification) body.id = nextId++;
 
-  const response = await fetch($('url').value, {
+  const response = await fetch(viaProxy ? '/proxy' : target, {
     method: 'POST', headers, body: JSON.stringify(body),
   });
 
