@@ -68,12 +68,6 @@
     </div>
     <div>
       <label>&nbsp;</label>
-      <label class="hint" style="margin:0" title="Forward through this app instead of calling the server directly from the browser">
-        <input type="checkbox" id="viaProxy" checked style="min-width:auto"> via proxy
-      </label>
-    </div>
-    <div>
-      <label>&nbsp;</label>
       <span id="status" class="status">not connected</span>
     </div>
   </div>
@@ -192,21 +186,19 @@ function setStatus(text, kind) {
 }
 
 async function rpc(method, params, isNotification = false) {
-  const target = $('url').value;
-  const viaProxy = $('viaProxy').checked;
-
   const headers = {
     'Content-Type': 'application/json',
     'Accept': 'application/json, text/event-stream',
   };
   if ($('token').value) headers['Authorization'] = 'Bearer ' + $('token').value;
   if (sessionId) headers['Mcp-Session-Id'] = sessionId;
-  if (viaProxy) headers['X-Target-Url'] = target;
 
   const body = { jsonrpc: '2.0', method, params };
   if (!isNotification) body.id = nextId++;
 
-  const response = await fetch(viaProxy ? '/proxy' : target, {
+  // Called directly, so the target server must allow this origin. A local forwarding
+  // proxy would remove that requirement but would also forward anywhere it was told to.
+  const response = await fetch($('url').value, {
     method: 'POST', headers, body: JSON.stringify(body),
   });
 
