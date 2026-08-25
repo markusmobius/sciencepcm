@@ -4,9 +4,8 @@
 #
 # No index is pinned here on purpose. The package index is supplied by the
 # environment (corporate proxy), so this file stays free of internal URLs.
-# After installing, confirm no CUDA payload came along on this GPU-less box:
-#   python -c "import torch; print(torch.__version__, torch.version.cuda)"
-# torch.version.cuda must print None.
+# On the A100 box a CUDA torch build is wanted; check with:
+#   python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
 #
 # optimum is deliberately absent: 2.x dropped the [exporters] extra and moved ONNX
 # export into a separate package. export_onnx.py calls torch.onnx.export directly,
@@ -17,3 +16,6 @@ transformers>=4.44
 onnx>=1.16
 onnxruntime>=1.19
 numpy>=1.26
+
+# ablate_encoder.py reads the abstracts Parquet directly.
+duckdb>=1.0
