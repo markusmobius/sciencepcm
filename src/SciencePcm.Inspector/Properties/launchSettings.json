@@ -1,0 +1,9 @@
+{
+  "profiles": {
+    "SciencePcm.Inspector": {
+      "commandName": "Project",
+      "applicationUrl": "http://localhost:5173",
+      "launchBrowser": false
+    }
+  }
+}

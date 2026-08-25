@@ -38,18 +38,35 @@ var options = new ServerOptions
 
 var token = builder.Configuration["token"] ?? Environment.GetEnvironmentVariable("SCIENCEPCM_TOKEN");
 
+// Browser clients need CORS, and MCP carries its session in a custom header that must be
+// explicitly exposed or the browser will hide it from script.
+var corsOrigins = (builder.Configuration["cors-origins"]
+        ?? "http://localhost:5173,http://127.0.0.1:5173")
+    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+builder.Services.AddCors(options => options.AddDefaultPolicy(policy => policy
+    .WithOrigins(corsOrigins)
+    .AllowAnyHeader()
+    .AllowAnyMethod()
+    .WithExposedHeaders("Mcp-Session-Id")));
+
 builder.Services.AddSingleton(options);
 builder.Services.AddSingleton<RetrievalService>();
 builder.Services.AddMcpServer().WithHttpTransport().WithToolsFromAssembly();
 
 var app = builder.Build();
 
+app.UseCors();
+
 // A shared-secret check, because this listens on the LAN. Not a substitute for TLS.
 if (!string.IsNullOrEmpty(token))
 {
     app.Use(async (context, next) =>
     {
-        if (context.Request.Path.StartsWithSegments("/health"))
+        // Preflight carries no Authorization header by design, so rejecting it would
+        // stop the browser ever sending the real request.
+        if (context.Request.Path.StartsWithSegments("/health")
+            || HttpMethods.IsOptions(context.Request.Method))
         {
             await next();
             return;
@@ -83,5 +100,6 @@ Console.WriteLine($"cross-encoder  : {options.CrossEncoderPath} (gpu={options.Us
 Console.WriteLine($"rerank depth   : {options.RerankCandidates}");
 Console.WriteLine($"auth           : {(string.IsNullOrEmpty(token) ? "OPEN - no token set" : "bearer token required")}");
 Console.WriteLine($"mcp endpoint   : /mcp");
+Console.WriteLine($"cors origins   : {string.Join(", ", corsOrigins)}");
 
 app.Run();

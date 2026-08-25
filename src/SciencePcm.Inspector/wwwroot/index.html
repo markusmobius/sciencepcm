@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SciencePCM MCP console</title>
+<style>
+  :root { color-scheme: dark; }
+  body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; background: #14171c; color: #e6e6e6; }
+  header { padding: 12px 20px; background: #1b1f26; border-bottom: 1px solid #2b313b; }
+  h1 { font-size: 16px; margin: 0 0 10px; font-weight: 600; }
+  main { padding: 20px; max-width: 1100px; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  label { font-size: 12px; color: #9aa4b2; display: block; margin-bottom: 3px; }
+  input, textarea, select, button { font: inherit; background: #10131a; color: #e6e6e6;
+    border: 1px solid #2b313b; border-radius: 6px; padding: 7px 9px; }
+  input, select { min-width: 240px; }
+  textarea { width: 100%; min-height: 90px; font-family: ui-monospace, monospace; font-size: 12px; }
+  button { cursor: pointer; background: #2a5db0; border-color: #2a5db0; }
+  button:hover { background: #336ccb; }
+  button.secondary { background: #232833; border-color: #2b313b; }
+  button:disabled { opacity: .5; cursor: default; }
+  .status { font-size: 12px; padding: 3px 8px; border-radius: 10px; background: #2b313b; }
+  .status.ok { background: #14532d; }
+  .status.bad { background: #5c1b1b; }
+  section { margin-top: 22px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .07em; color: #9aa4b2; margin: 0 0 8px; }
+  .card { background: #1b1f26; border: 1px solid #2b313b; border-radius: 8px; padding: 12px 14px; margin-bottom: 8px; }
+  .card h3 { margin: 0 0 4px; font-size: 14px; }
+  .meta { font-size: 12px; color: #9aa4b2; margin-bottom: 6px; }
+  .excerpt { font-size: 13px; line-height: 1.45; color: #c8cdd4; }
+  pre { background: #10131a; border: 1px solid #2b313b; border-radius: 6px; padding: 10px;
+    overflow: auto; max-height: 420px; font-size: 12px; }
+  .tool { cursor: pointer; }
+  .tool.active { border-color: #2a5db0; }
+  .hint { font-size: 12px; color: #9aa4b2; }
+</style>
+</head>
+<body>
+<header>
+  <h1>SciencePCM MCP console</h1>
+  <div class="row">
+    <div>
+      <label for="url">Server URL</label>
+      <input id="url" size="46" value="https://www.sciencemcp.econlabs.org/mcp">
+    </div>
+    <div>
+      <label for="token">Bearer token</label>
+      <input id="token" type="password" size="34" placeholder="stored in localStorage">
+    </div>
+    <div>
+      <label>&nbsp;</label>
+      <button id="connect">Connect</button>
+    </div>
+    <div>
+      <label>&nbsp;</label>
+      <span id="status" class="status">not connected</span>
+    </div>
+  </div>
+</header>
+
+<main>
+  <section>
+    <h2>Quick search</h2>
+    <div class="row">
+      <input id="query" size="70" placeholder="What is the role of microglia in synaptic pruning?">
+      <input id="k" type="number" value="10" min="1" max="50" style="min-width:80px">
+      <label style="margin:0"><input type="checkbox" id="fast" style="min-width:auto"> fast (no rerank)</label>
+      <button id="search" disabled>Search</button>
+    </div>
+    <div id="results"></div>
+  </section>
+
+  <section>
+    <h2>Tools</h2>
+    <div id="tools" class="hint">Connect to list tools.</div>
+    <div id="callBox" style="display:none; margin-top:10px">
+      <label for="args">Arguments (JSON)</label>
+      <textarea id="args">{}</textarea>
+      <div class="row" style="margin-top:8px">
+        <button id="call">Call <span id="callName"></span></button>
+        <button id="clearLog" class="secondary">Clear log</button>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Log</h2>
+    <pre id="log"></pre>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const store = {
+  get url()   { return localStorage.getItem('mcp.url') || $('url').value; },
+  get token() { return localStorage.getItem('mcp.token') || ''; },
+  set url(v)  { localStorage.setItem('mcp.url', v); },
+  set token(v){ localStorage.setItem('mcp.token', v); },
+};
+
+let sessionId = null;
+let nextId = 1;
+let selectedTool = null;
+
+$('url').value = store.url;
+$('token').value = store.token;
+$('url').addEventListener('change', e => store.url = e.target.value);
+$('token').addEventListener('change', e => store.token = e.target.value);
+
+function log(label, payload) {
+  const stamp = new Date().toLocaleTimeString();
+  const text = typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2);
+  $('log').textContent = `[${stamp}] ${label}\n${text}\n\n` + $('log').textContent;
+}
+
+function setStatus(text, kind) {
+  $('status').textContent = text;
+  $('status').className = 'status' + (kind ? ' ' + kind : '');
+}
+
+async function rpc(method, params, isNotification = false) {
+  const headers = {
+    'Content-Type': 'application/json',
+    'Accept': 'application/json, text/event-stream',
+  };
+  if ($('token').value) headers['Authorization'] = 'Bearer ' + $('token').value;
+  if (sessionId) headers['Mcp-Session-Id'] = sessionId;
+
+  const body = { jsonrpc: '2.0', method, params };
+  if (!isNotification) body.id = nextId++;
+
+  const response = await fetch($('url').value, {
+    method: 'POST', headers, body: JSON.stringify(body),
+  });
+
+  const returned = response.headers.get('Mcp-Session-Id');
+  if (returned) sessionId = returned;
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+  }
+  if (isNotification || response.status === 202) return null;
+
+  const contentType = response.headers.get('content-type') || '';
+  const raw = await response.text();
+
+  // Streamable HTTP may answer as a one-shot JSON body or as an SSE stream carrying
+  // the same JSON-RPC message in a data: line.
+  if (contentType.includes('text/event-stream')) {
+    for (const line of raw.split('\n')) {
+      if (line.startsWith('data:')) return JSON.parse(line.slice(5).trim());
+    }
+    throw new Error('No data frame in SSE response');
+  }
+
+  const parsed = JSON.parse(raw);
+  if (parsed.error) throw new Error(parsed.error.message || JSON.stringify(parsed.error));
+  return parsed;
+}
+
+async function connect() {
+  sessionId = null;
+  setStatus('connecting...');
+  try {
+    const init = await rpc('initialize', {
+      protocolVersion: '2024-11-05',
+      capabilities: {},
+      clientInfo: { name: 'sciencepcm-console', version: '1' },
+    });
+    log('initialize', init);
+
+    await rpc('notifications/initialized', {}, true);
+
+    const tools = await rpc('tools/list', {});
+    log('tools/list', tools);
+    renderTools(tools.result?.tools || []);
+
+    setStatus('connected', 'ok');
+    $('search').disabled = false;
+  } catch (error) {
+    setStatus('failed', 'bad');
+    log('error', error.message);
+  }
+}
+
+function renderTools(tools) {
+  const host = $('tools');
+  host.innerHTML = '';
+  if (!tools.length) { host.textContent = 'No tools returned.'; return; }
+
+  for (const tool of tools) {
+    const card = document.createElement('div');
+    card.className = 'card tool';
+    card.innerHTML = `<h3>${tool.name}</h3><div class="excerpt">${tool.description || ''}</div>`;
+    card.onclick = () => {
+      document.querySelectorAll('.tool').forEach(t => t.classList.remove('active'));
+      card.classList.add('active');
+      selectedTool = tool;
+      $('callName').textContent = tool.name;
+      $('callBox').style.display = 'block';
+      $('args').value = JSON.stringify(sampleArgs(tool), null, 2);
+    };
+    host.appendChild(card);
+  }
+}
+
+function sampleArgs(tool) {
+  const properties = tool.inputSchema?.properties || {};
+  const sample = {};
+  for (const [name, spec] of Object.entries(properties)) {
+    if (spec.type === 'string') sample[name] = '';
+    else if (spec.type === 'integer' || spec.type === 'number') sample[name] = 10;
+    else if (spec.type === 'boolean') sample[name] = false;
+  }
+  return sample;
+}
+
+async function callTool(name, args) {
+  const started = performance.now();
+  const response = await rpc('tools/call', { name, arguments: args });
+  const elapsed = Math.round(performance.now() - started);
+  log(`tools/call ${name} (${elapsed} ms)`, response);
+  return response;
+}
+
+function renderResults(response) {
+  const host = $('results');
+  host.innerHTML = '';
+
+  const text = response?.result?.content?.map(c => c.text).join('\n') || '';
+  let payload;
+  try { payload = JSON.parse(text); } catch { host.innerHTML = `<pre>${text}</pre>`; return; }
+
+  if (!payload.results) { host.innerHTML = `<pre>${JSON.stringify(payload, null, 2)}</pre>`; return; }
+
+  for (const [index, item] of payload.results.entries()) {
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.innerHTML =
+      `<h3>${index + 1}. ${escapeHtml(item.title || '(untitled)')}</h3>` +
+      `<div class="meta">${item.year || '?'} &middot; score ${item.score} &middot; ` +
+      `${escapeHtml(item.article_key)}${item.pmid ? ' &middot; PMID ' + item.pmid : ''}</div>` +
+      `<div class="excerpt">${escapeHtml(item.abstract_excerpt || '')}</div>`;
+    host.appendChild(card);
+  }
+}
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+}
+
+$('connect').onclick = connect;
+$('clearLog').onclick = () => $('log').textContent = '';
+
+$('search').onclick = async () => {
+  $('search').disabled = true;
+  $('results').innerHTML = '<div class="hint">searching...</div>';
+  try {
+    const response = await callTool('search_literature', {
+      query: $('query').value,
+      k: Number($('k').value),
+      fast: $('fast').checked,
+    });
+    renderResults(response);
+  } catch (error) {
+    $('results').innerHTML = '';
+    log('error', error.message);
+  } finally {
+    $('search').disabled = false;
+  }
+};
+
+$('call').onclick = async () => {
+  if (!selectedTool) return;
+  try {
+    const response = await callTool(selectedTool.name, JSON.parse($('args').value));
+    if (selectedTool.name === 'search_literature') renderResults(response);
+  } catch (error) {
+    log('error', error.message);
+  }
+};
+</script>
+</body>
+</html>
