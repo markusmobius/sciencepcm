@@ -11,11 +11,8 @@
 set -uo pipefail
 
 REMOTE="${REMOTE:-markusmobius@www.llmserver.econlabs.org}"
-# Space-separated remote:local pairs. One SSH connection carries them all, so both
-# endpoints go up and down together rather than drifting apart.
-#   9201 -> production server on 8080
-#   6671 -> staging server on 6671
-FORWARDS="${FORWARDS:-9201:8080 6671:6671}"
+# Space-separated remote:local pairs, in case more than one service needs forwarding.
+FORWARDS="${FORWARDS:-9201:8080}"
 KEY="${KEY:-$HOME/.ssh/id_ed25519}"
 RETRY_SECONDS="${RETRY_SECONDS:-5}"
 

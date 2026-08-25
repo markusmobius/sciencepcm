@@ -325,30 +325,19 @@ cd ~/sciencepcm
 ./tools/mcp-tunnel.sh
 ```
 
-One SSH connection carries both endpoints, so they cannot drift apart:
+One SSH connection, one forward:
 
 | relay port | local port | serves |
 | --- | --- | --- |
 | 9201 | 8080 | `https://www.sciencemcp.econlabs.org` — production |
-| 6671 | 6671 | `https://www.mcptest.econlabs.org` — staging |
 
-Override with `FORWARDS="9201:8080"` to run only one. The nginx vhosts live in
+Add more with `FORWARDS="9201:8080 9202:8081"`. The nginx vhosts live in
 `deploy/nginx/`; each file carries its own install instructions in a header comment.
+`www.mcptest.econlabs.org` is a staging endpoint served by a process running on the
+relay itself, so it needs no forward here.
 
-`-R` binds to the relay's loopback, so 9201 and 6671 are never directly exposed — only
-nginx can reach them. Verify with `ss -tlnp | grep -E '9201|6671'` on the relay.
-
-To run a staging instance alongside production, start a second server on 6671:
-
-```bash
-dotnet run --project src/SciencePcm.Server -c Release -p:UseGpu=true -- \
-  --index ~/sciencepcm-data/index/abstracts-bm25-v2 \
-  --cross-encoder ~/sciencepcm-data/models/medcpt-cross \
-  --gpu --gpu-mem-limit-gb 8 \
-  --urls http://0.0.0.0:6671
-```
-
-Cap its GPU memory — two unconstrained ONNX sessions will fight over the card.
+`-R` binds to the relay's loopback, so 9201 is never directly exposed — only nginx can
+reach it. Verify with `ss -tlnp | grep 9201` on the relay.
 
 ### 6. Point an LLM at it
 
