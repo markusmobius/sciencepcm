@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
 from pathlib import Path
 
 import duckdb
@@ -38,6 +39,11 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=None, help="Only the first n queries")
     parser.add_argument("--batch", type=int, default=64)
     parser.add_argument("--max-tokens", type=int, default=512)
+    parser.add_argument(
+        "--trust-remote-code",
+        action="store_true",
+        help="Some rerankers ship custom model code. Only for models you trust.",
+    )
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = parser.parse_args()
 
@@ -62,11 +68,17 @@ def main() -> int:
     print(f"text found : {len(text_by_key):,}")
 
     device = torch.device(args.device)
-    tokenizer = AutoTokenizer.from_pretrained(args.model)
-    model = AutoModelForSequenceClassification.from_pretrained(args.model).to(device).eval()
+    tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=args.trust_remote_code)
+    model = (
+        AutoModelForSequenceClassification
+        .from_pretrained(args.model, trust_remote_code=args.trust_remote_code)
+        .to(device)
+        .eval()
+    )
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     scored_pairs = 0
+    started = time.perf_counter()
 
     with args.out.open("w", encoding="utf-8") as stream, torch.inference_mode():
         for index, record in enumerate(runs, start=1):
@@ -112,7 +124,8 @@ def main() -> int:
             if index % 50 == 0:
                 print(f"  {index:,}/{len(runs):,}  ({scored_pairs:,} pairs)", end="\r")
 
-    print(f"\nScored {scored_pairs:,} pairs")
+    elapsed = time.perf_counter() - started
+    print(f"\nScored {scored_pairs:,} pairs in {elapsed:,.0f}s ({scored_pairs / max(elapsed, 1e-9):,.0f} pairs/s)")
     print(f"Wrote {args.out}")
     print("Score it with: python eval/run_eval.py --retriever runfile --run <file> --qrels <qrels>")
     return 0
