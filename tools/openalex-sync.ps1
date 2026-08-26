@@ -14,8 +14,8 @@
 
 [CmdletBinding()]
 param(
-    [string]$Root = 'D:\OpenAlexData',
-    [string]$Python = 'D:\OpenAlexData\venvs\sync\Scripts\python.exe',
+    [string]$Root = 'C:\OpenAlexData',
+    [string]$Python = 'C:\OpenAlexData\venvs\sync\Scripts\python.exe',
     [int]$Threads = 64,
     [int]$ShardSize = 250000,
     [switch]$Force,

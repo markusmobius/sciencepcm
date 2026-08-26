@@ -20,7 +20,7 @@ filter and no full-text tier.
 
 ## 1. nerds21
 
-The share `\\nerds21\OpenAlexData` is expected to be `D:\OpenAlexData` locally.
+The share `\\nerds21\OpenAlexData` is `C:\OpenAlexData` locally on nerds21.
 Use the local path on nerds21; SMB loopback only makes a long ingest slower.
 
 First inspect the plan:
@@ -36,7 +36,7 @@ Then run the ingest and upload. This is the long corpus job:
 .\tools\openalex-sync.ps1
 ```
 
-Output lands at `D:\OpenAlexData\__temp\abstracts`, visible as
+Output lands at `C:\OpenAlexData\__temp\abstracts`, visible as
 `\\nerds21\OpenAlexData\__temp\abstracts`. It is uploaded to
 `openalex/abstracts` with the cloud tag `project=openalex`.
 
@@ -50,8 +50,8 @@ For a bounded ingest smoke test without cloud transfer:
 
 ```powershell
 dotnet run --project src\OpenAlex.Ingest -c Release -- `
-  --input D:\OpenAlexData\data\works `
-  --out D:\OpenAlexData\__temp\smoke `
+  --input C:\OpenAlexData\data\works `
+  --out C:\OpenAlexData\__temp\smoke `
   --limit 10000 --threads 8 --shard-size 5000
 ```
 
