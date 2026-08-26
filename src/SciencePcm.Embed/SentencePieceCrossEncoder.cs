@@ -73,14 +73,26 @@ public sealed class SentencePieceCrossEncoder : ICrossEncoder
         using var results = _tokenizerSession.Run(
             [NamedOnnxValue.CreateFromTensor(_tokenizerSession.InputMetadata.Keys.First(), input)]);
 
-        var ids = results.First().AsTensor<long>();
-        var trimmed = new List<int>((int)ids.Length);
+        // Generated tokenizer graphs vary: the ids may be int64 or int32, and may not be
+        // the first output. AsTensor<T> returns null on a type mismatch rather than
+        // throwing, so both are tried explicitly.
+        var outputs = results.ToList();
+        var chosen = outputs.FirstOrDefault(r => r.Name.Contains("input_id", StringComparison.OrdinalIgnoreCase))
+            ?? outputs.FirstOrDefault(r => r.Name.Contains("id", StringComparison.OrdinalIgnoreCase))
+            ?? outputs.First();
+
+        var raw = chosen.AsTensor<long>()?.ToArray().Select(v => (int)v).ToArray()
+            ?? chosen.AsTensor<int>()?.ToArray()
+            ?? throw new InvalidOperationException(
+                $"tokenizer.onnx output '{chosen.Name}' is neither int64 nor int32. " +
+                $"Outputs: {string.Join(", ", outputs.Select(o => o.Name))}");
+
+        var trimmed = new List<int>(raw.Length);
 
         // The graph emits the special tokens for a single sequence; pair assembly needs
         // the bare pieces, so drop them here and add the pair layout below.
-        foreach (var id in ids.ToArray())
+        foreach (var value in raw)
         {
-            var value = (int)id;
             if (value == _special.Bos || value == _special.Eos || value == _special.Pad) continue;
             trimmed.Add(value);
         }
