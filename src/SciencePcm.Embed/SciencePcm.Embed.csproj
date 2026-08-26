@@ -8,6 +8,8 @@
     <PackageReference Include="FastBertTokenizer" Version="1.0.28" />
     <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.29.0" Condition="'$(UseGpu)' != 'true'" />
     <PackageReference Include="Microsoft.ML.OnnxRuntime.Gpu" Version="1.29.0" Condition="'$(UseGpu)' == 'true'" />
+    <!-- Supplies the SentencePiece custom ops for rerankers that are not WordPiece. -->
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.Extensions" Version="0.14.0" />
     <PackageReference Include="Microsoft.ML.Tokenizers" Version="2.0.0" />
     <PackageReference Include="Parquet.Net" Version="6.1.0" />
   </ItemGroup>

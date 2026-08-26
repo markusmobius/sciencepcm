@@ -19,3 +19,6 @@ numpy>=1.26
 
 # ablate_encoder.py reads the abstracts Parquet directly.
 duckdb>=1.0
+
+# export_onnx.py --reranker: builds the SentencePiece tokenizer as an ONNX graph.
+onnxruntime-extensions>=0.13

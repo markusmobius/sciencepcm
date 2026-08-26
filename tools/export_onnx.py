@@ -184,8 +184,125 @@ def export(model_id: str, destination: Path, max_tokens: int, opset: int, kind: 
     print(f"  wrote: model.onnx ({size_mb:,.0f} MB), vocab.txt")
 
 
+def export_reranker(model_id: str, destination: Path, max_tokens: int, opset: int) -> None:
+    """Export an XLM-RoBERTa reranker such as BAAI/bge-reranker-v2-m3.
+
+    Two graphs, not one: the model, and a tokenizer built by onnxruntime-extensions.
+    SentencePiece cannot be done by FastBertTokenizer, and reimplementing it in C# to
+    match HuggingFace exactly is exactly the kind of silent divergence this project has
+    already been bitten by. Running HuggingFace's own tokenizer as ONNX avoids it.
+
+    These models take no token_type_ids; pairs are bos A eos eos B eos.
+    """
+    import numpy as np
+    import onnxruntime as ort
+    import torch
+    from onnxruntime_extensions import gen_processing_models
+    from transformers import AutoModelForSequenceClassification, AutoTokenizer
+
+    destination.mkdir(parents=True, exist_ok=True)
+    print(f"Exporting {model_id} -> {destination}")
+
+    tokenizer = AutoTokenizer.from_pretrained(model_id)
+    model = AutoModelForSequenceClassification.from_pretrained(model_id).eval()
+
+    class Reranker(torch.nn.Module):
+        def __init__(self, inner):
+            super().__init__()
+            self.inner = inner
+
+        def forward(self, input_ids, attention_mask):
+            return self.inner(input_ids=input_ids, attention_mask=attention_mask).logits
+
+    wrapper = Reranker(model).eval()
+
+    names = ["input_ids", "attention_mask"]
+    encoded = tokenizer(
+        [p[0] for p in PROBE_PAIRS[:2]],
+        [p[1] for p in PROBE_PAIRS[:2]],
+        padding="max_length", truncation=True, max_length=64, return_tensors="pt",
+    )
+    args = (encoded["input_ids"], encoded["attention_mask"])
+
+    onnx_path = destination / "model.onnx"
+    dynamic_axes = {name: {0: "batch", 1: "sequence"} for name in names}
+    dynamic_axes[CROSS_OUTPUT_NAME] = {0: "batch"}
+
+    kwargs = {}
+    if "dynamo" in inspect.signature(torch.onnx.export).parameters:
+        kwargs["dynamo"] = False
+
+    with torch.no_grad():
+        torch.onnx.export(
+            wrapper, args, str(onnx_path),
+            input_names=names, output_names=[CROSS_OUTPUT_NAME],
+            dynamic_axes=dynamic_axes, opset_version=opset,
+            do_constant_folding=True, **kwargs,
+        )
+
+    tokenizer.save_pretrained(destination)
+
+    # The tokenizer graph takes one string sequence; the C# side assembles pairs.
+    pre_model, _ = gen_processing_models(tokenizer, pre_kwargs={})
+    (destination / "tokenizer.onnx").write_bytes(pre_model.SerializeToString())
+
+    (destination / "special-tokens.json").write_text(json.dumps({
+        "bos_token_id": tokenizer.bos_token_id if tokenizer.bos_token_id is not None else tokenizer.cls_token_id,
+        "eos_token_id": tokenizer.eos_token_id if tokenizer.eos_token_id is not None else tokenizer.sep_token_id,
+        "pad_token_id": tokenizer.pad_token_id,
+        "unk_token_id": tokenizer.unk_token_id,
+    }, indent=2), encoding="utf-8")
+
+    verify = tokenizer(
+        [p[0] for p in PROBE_PAIRS], [p[1] for p in PROBE_PAIRS],
+        padding=True, truncation=True, max_length=max_tokens, return_tensors="pt",
+    )
+    verify_args = (verify["input_ids"], verify["attention_mask"])
+    print(f"  export shape {tuple(args[0].shape)} -> verify shape {tuple(verify_args[0].shape)}")
+
+    with torch.no_grad():
+        reference = wrapper(*verify_args).numpy()
+
+    session = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
+    actual = session.run(
+        [CROSS_OUTPUT_NAME],
+        {name: verify_args[i].numpy() for i, name in enumerate(names)},
+    )[0]
+
+    drift = float(np.abs(reference - actual).max())
+    print(f"  torch vs onnxruntime max abs diff: {drift:.2e}")
+    if drift > 1e-3:
+        raise RuntimeError(f"ONNX export diverges from PyTorch (max abs diff {drift:.2e}).")
+
+    scores = actual.reshape(-1).tolist()
+    for i in range(0, min(4, len(scores)), 2):
+        print(f"  probe {i//2}: match {scores[i]:+.3f} vs mismatch {scores[i+1]:+.3f}")
+        if scores[i] <= scores[i + 1]:
+            raise RuntimeError("Reranker scored a mismatched pair above its match.")
+
+    # Pair parity, so the C# assembly of bos A eos eos B eos can be proven correct.
+    samples = []
+    for query, passage in PROBE_PAIRS:
+        pair = tokenizer(query, passage, truncation=True, max_length=max_tokens)
+        samples.append({
+            "query": query,
+            "passage": passage,
+            "ids": pair["input_ids"],
+            "tokens": tokenizer.convert_ids_to_tokens(pair["input_ids"]),
+        })
+
+    (destination / "tokenizer-parity.json").write_text(json.dumps({
+        "model_id": model_id,
+        "kind": "reranker-sentencepiece",
+        "max_tokens": max_tokens,
+        "samples": samples,
+    }, indent=2), encoding="utf-8")
+
+    size_mb = onnx_path.stat().st_size / 1024 / 1024
+    print(f"  wrote: model.onnx ({size_mb:,.0f} MB), tokenizer.onnx, special-tokens.json")
+
+
 def write_vocab(tokenizer, destination: Path) -> None:
-    """Fast tokenizers persist tokenizer.json, but the C# side needs a plain vocab.txt."""
     path = destination / "vocab.txt"
     if path.exists():
         return
@@ -262,7 +379,19 @@ def main() -> int:
         default="medcpt-cross",
         help="Output directory name for the cross-encoder.",
     )
+    parser.add_argument(
+        "--reranker",
+        help="Export an XLM-R reranker instead, e.g. BAAI/bge-reranker-v2-m3. Writes a "
+        "tokenizer.onnx alongside, which is how the C# side detects the SentencePiece path.",
+    )
+    parser.add_argument("--reranker-name", default="bge-reranker", help="Output directory for --reranker.")
     args = parser.parse_args()
+
+    if args.reranker:
+        export_reranker(args.reranker, args.out / args.reranker_name, args.max_tokens, args.opset)
+        print()
+        print(f"Serve it with: --cross-encoder {args.out / args.reranker_name}")
+        return 0
 
     if args.cross_only:
         targets = [(args.cross_model, args.out / args.cross_name, "cross")]

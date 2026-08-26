@@ -42,7 +42,7 @@ public sealed class RetrievalService : IDisposable
     private readonly LexicalSearcher _lexical;
     private readonly LexicalSearcher? _passages;
     private readonly InferenceSession _session;
-    private readonly ThreadLocal<CrossEncoder> _rerankers;
+    private readonly ThreadLocal<ICrossEncoder> _rerankers;
     private readonly ServerOptions _options;
 
     public RetrievalService(ServerOptions options)
@@ -61,7 +61,7 @@ public sealed class RetrievalService : IDisposable
             gpuMemLimitBytes: options.GpuMemoryLimitBytes);
 
         // Run() is thread-safe so the session is shared, but each tokenizer is not.
-        _rerankers = new ThreadLocal<CrossEncoder>(() => new CrossEncoder(
+        _rerankers = new ThreadLocal<ICrossEncoder>(() => CrossEncoderFactory.Create(
             new CrossEncoderOptions(options.CrossEncoderPath, options.Threads, options.MaxTokens),
             _session));
     }

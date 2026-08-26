@@ -13,11 +13,20 @@ public sealed record CrossEncoderOptions(
     int PadMultiple = 32);
 
 /// <summary>
+/// Scores a query against passages. Implementations differ in how they tokenise, which
+/// is the part that varies between model families.
+/// </summary>
+public interface ICrossEncoder : IDisposable
+{
+    float[] Score(string query, IReadOnlyList<string> passages);
+}
+
+/// <summary>
 /// MedCPT cross-encoder: scores a query against passages by reading both together.
 /// Slower than a bi-encoder because nothing can be precomputed, but the LLM judge
-/// measured it as the single largest quality win (nDCG@10 0.676 -> 0.771).
+/// measured it as the single largest quality win (nDCG@10 0.686 -> 0.790).
 /// </summary>
-public sealed class CrossEncoder : IDisposable
+public sealed class CrossEncoder : ICrossEncoder
 {
     private static readonly string[] InputNames = ["input_ids", "attention_mask", "token_type_ids"];
     private const string OutputName = "logits";
@@ -27,12 +36,14 @@ public sealed class CrossEncoder : IDisposable
     private readonly ICorpusTokenizer _tokenizer;
     private readonly CrossEncoderOptions _options;
     private readonly int _separatorId;
+    private readonly bool _needsTokenTypeIds;
 
     public CrossEncoder(CrossEncoderOptions options, InferenceSession? sharedSession = null)
     {
         _options = options;
         _session = sharedSession ?? TextEmbedder.CreateSession(options.ModelDirectory, options.IntraOpThreads);
         _ownsSession = sharedSession is null;
+        _needsTokenTypeIds = _session.InputMetadata.ContainsKey("token_type_ids");
         _tokenizer = TokenizerFactory.Create(
             options.ModelDirectory, options.Tokenizer, options.MaxTokens, options.LowerCase);
 
@@ -103,7 +114,7 @@ public sealed class CrossEncoder : IDisposable
         var batch = passages.Count;
         var inputIds = new DenseTensor<long>([batch, width]);
         var attention = new DenseTensor<long>([batch, width]);
-        var types = new DenseTensor<long>([batch, width]);
+        var types = _needsTokenTypeIds ? new DenseTensor<long>([batch, width]) : null;
 
         for (var row = 0; row < batch; row++)
         {
@@ -112,7 +123,7 @@ public sealed class CrossEncoder : IDisposable
             {
                 inputIds[row, column] = ids[column];
                 attention[row, column] = 1;
-                types[row, column] = typeIds[column];
+                if (types is not null) types[row, column] = typeIds[column];
             }
         }
 
@@ -120,8 +131,11 @@ public sealed class CrossEncoder : IDisposable
         {
             NamedOnnxValue.CreateFromTensor(InputNames[0], inputIds),
             NamedOnnxValue.CreateFromTensor(InputNames[1], attention),
-            NamedOnnxValue.CreateFromTensor(InputNames[2], types),
         };
+        if (types is not null)
+        {
+            inputs.Add(NamedOnnxValue.CreateFromTensor(InputNames[2], types));
+        }
 
         using var results = _session.Run(inputs);
         var logits = results.First(r => r.Name == OutputName).AsTensor<float>();

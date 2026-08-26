@@ -100,6 +100,7 @@ var warmup = app.Services.GetRequiredService<RetrievalService>();
 Console.WriteLine($"index          : {options.IndexPath} ({warmup.DocumentCount:N0} documents)");
 Console.WriteLine($"passage index  : {options.PassageIndexPath ?? "(none)"} ({warmup.PassageCount:N0} passages)");
 Console.WriteLine($"cross-encoder  : {options.CrossEncoderPath} (gpu={options.UseGpu})");
+Console.WriteLine($"tokenizer      : {SciencePcm.Embed.CrossEncoderFactory.Describe(options.CrossEncoderPath)}");
 Console.WriteLine($"rerank depth   : {options.RerankCandidates}");
 Console.WriteLine($"auth           : {(string.IsNullOrEmpty(token) ? "OPEN - no token set" : "bearer token required")}");
 Console.WriteLine($"mcp endpoint   : /mcp");
