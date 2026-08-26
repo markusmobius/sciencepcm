@@ -263,7 +263,7 @@ cd ~/sciencepcm
 dotnet run --project src/SciencePcm.Lexical -c Release -- build \
   --input "$HOME/sciencepcm-data/sciencepcm/abstracts/*.parquet" \
   --schema abstracts \
-  --out ~/sciencepcm-data/index/abstracts-bm25-v2 \
+  --out ~/sciencepcm-data/index/abstracts-bm25 \
   --threads 16 --ram-buffer 2048
 ```
 
@@ -274,7 +274,7 @@ dotnet run --project src/SciencePcm.Lexical -c Release -- build \
   --input "$HOME/sciencepcm-data/sciencepcm/passages-2019-2025/chunks-part-*.parquet" \
   --metadata "$HOME/sciencepcm-data/sciencepcm/passages-2019-2025/articles-part-*.parquet" \
   --schema chunks \
-  --out ~/sciencepcm-data/index/passages-bm25-v2 \
+  --out ~/sciencepcm-data/index/passages-bm25 \
   --threads 16 --ram-buffer 2048
 ```
 
@@ -317,8 +317,8 @@ source ~/sciencepcm-data/env.sh
 cd ~/sciencepcm
 
 dotnet run --project src/SciencePcm.Server -c Release -p:UseGpu=true -- \
-  --index ~/sciencepcm-data/index/abstracts-bm25-v2 \
-  --passage-index ~/sciencepcm-data/index/passages-bm25-v2 \
+  --index ~/sciencepcm-data/index/abstracts-bm25 \
+  --passage-index ~/sciencepcm-data/index/passages-bm25 \
   --cross-encoder ~/sciencepcm-data/models/medcpt-cross \
   --gpu \
   --urls http://0.0.0.0:8080
