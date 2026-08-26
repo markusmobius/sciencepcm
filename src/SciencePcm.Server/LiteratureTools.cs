@@ -13,6 +13,9 @@ public sealed class LiteratureTools(RetrievalService retrieval)
     [Description(
         "Search ABSTRACTS of neuroscience papers and return the most relevant papers. This is " +
         "the tier to use for breadth - which papers exist on a topic, what a field says. " +
+        "Each result includes title, journal, publication date/year, DOI, PMID, PMCID, citation " +
+        "count, open-access status, relevance score and an abstract excerpt when available. " +
+        "Use get_paper for the complete abstract and additional links. " +
         "DO NOT use abstracts to answer methods questions, sample sizes, parameters, procedures " +
         "or specific findings: call search_full_text instead. On a methods benchmark, full-text " +
         "search achieved 0.932 nDCG@10 and 89% useful results, versus 0.247 and 21% for abstracts. " +
@@ -67,8 +70,8 @@ public sealed class LiteratureTools(RetrievalService retrieval)
         "papers. ALWAYS use this first for what a study actually did or found: methods, sample " +
         "sizes, parameters, procedures and specific results. Full text substantially outperformed " +
         "abstracts on methods questions (0.932 vs 0.247 nDCG@10; 89% vs 21% useful results). " +
-        "Each hit is a ~300 word fragment labelled with its " +
-        "section, so it can be quoted and attributed. " +
+        "Each hit is a ~300 word fragment with title, authors, journal, publication date/year, " +
+        "DOI, PMID, PMCID, section and retraction status, so it can be quoted and attributed. " +
         "IMPORTANT: full text covers only about 23% of the corpus, so absence here does not " +
         "mean absence from the literature. Fall back to search_literature to identify papers, " +
         "but do not present an abstract as evidence for methodological details it does not state. " +
@@ -159,7 +162,12 @@ public sealed class LiteratureTools(RetrievalService retrieval)
     }
 
     [McpServerTool(Name = "get_paper")]
-    [Description("Retrieve the complete abstract and metadata for one paper by its article key. This does not return full text.")]
+    [Description(
+        "Retrieve the complete abstract and all available bibliographic metadata for one paper " +
+        "by its article key: title, journal, publisher, publication date/year, DOI, PMID, PMCID, " +
+        "ISSN, work type, language, citation count, keywords, open-access status, landing/PDF URLs, " +
+        "license and retraction status. Fields absent from the source are null. This does not " +
+        "return article full text; use search_full_text for passages.")]
     public string GetPaper(
         [Description("The article key, for example https://openalex.org/W2154021234")] string articleKey)
     {
