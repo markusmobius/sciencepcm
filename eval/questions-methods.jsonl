@@ -1,0 +1,30 @@
+{"query_id": "m01", "query_text": "What concentration of TTX is used to block sodium channels in acute brain slice recordings?"}
+{"query_id": "m02", "query_text": "What internal solution composition is used for whole-cell voltage clamp of CA1 pyramidal neurons?"}
+{"query_id": "m03", "query_text": "At what holding potential are miniature EPSCs recorded in cortical neurons?"}
+{"query_id": "m04", "query_text": "What temperature are acute hippocampal slices maintained at during patch clamp recording?"}
+{"query_id": "m05", "query_text": "How thick are acute brain slices cut for electrophysiology in adult mice?"}
+{"query_id": "m06", "query_text": "Which AAV serotype gives the most efficient retrograde labelling of dopaminergic neurons?"}
+{"query_id": "m07", "query_text": "What titre of AAV is injected for optogenetic expression in mouse cortex?"}
+{"query_id": "m08", "query_text": "How many weeks after viral injection are optogenetic experiments performed?"}
+{"query_id": "m09", "query_text": "What light power density is used for ChR2 activation in vivo?"}
+{"query_id": "m10", "query_text": "What laser wavelength and pulse duration are used for optogenetic silencing with halorhodopsin?"}
+{"query_id": "m11", "query_text": "What perfusion and fixation protocol is used before immunohistochemistry in mouse brain?"}
+{"query_id": "m12", "query_text": "At what dilution is anti-GFAP antibody used for immunostaining of astrocytes?"}
+{"query_id": "m13", "query_text": "What blocking solution is used to reduce non-specific antibody binding in brain sections?"}
+{"query_id": "m14", "query_text": "How long is the habituation period before open field testing in mice?"}
+{"query_id": "m15", "query_text": "How many trials per day are used in the Morris water maze acquisition phase?"}
+{"query_id": "m16", "query_text": "What shock intensity and duration are used for contextual fear conditioning in mice?"}
+{"query_id": "m17", "query_text": "How is freezing behaviour scored and what threshold defines a freezing bout?"}
+{"query_id": "m18", "query_text": "What repetition time and echo time are used for resting state fMRI in humans?"}
+{"query_id": "m19", "query_text": "What motion correction threshold is used to exclude fMRI volumes from analysis?"}
+{"query_id": "m20", "query_text": "What voxel size is used for diffusion tensor imaging of white matter tracts?"}
+{"query_id": "m21", "query_text": "What frame rate and objective are used for two-photon calcium imaging in awake mice?"}
+{"query_id": "m22", "query_text": "Which GCaMP variant is used for imaging population activity in visual cortex?"}
+{"query_id": "m23", "query_text": "How are spikes sorted and what criteria define a well-isolated single unit?"}
+{"query_id": "m24", "query_text": "What sample size and power calculation justify group sizes in mouse behavioural studies?"}
+{"query_id": "m25", "query_text": "How is multiple comparison correction handled in whole-brain voxelwise analyses?"}
+{"query_id": "m26", "query_text": "What effect size was reported for ketamine on depression scores at 24 hours?"}
+{"query_id": "m27", "query_text": "What proportion of parvalbumin interneurons were labelled after viral injection?"}
+{"query_id": "m28", "query_text": "Which studies found no effect of transcranial direct current stimulation on working memory?"}
+{"query_id": "m29", "query_text": "Which studies failed to replicate an association between gut microbiome and anxiety behaviour?"}
+{"query_id": "m30", "query_text": "What washout period is used in crossover designs of psychedelic clinical trials?"}
