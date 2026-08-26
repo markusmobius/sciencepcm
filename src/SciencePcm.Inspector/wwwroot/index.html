@@ -79,8 +79,10 @@
   <section class="panel" id="quickPanel" hidden>
     <h2>Quick search</h2>
     <div class="row">
-      <input id="query" size="70" placeholder="What is the role of microglia in synaptic pruning?">
+      <select id="quickTool" style="min-width:170px"></select>
+      <input id="query" size="58" placeholder="What is the role of microglia in synaptic pruning?">
       <input id="k" type="number" value="10" min="1" max="50" style="min-width:80px">
+      <input id="section" size="14" placeholder="section" title="Methods, Results, Discussion ... full text only">
       <label style="margin:0"><input type="checkbox" id="fast" style="min-width:auto"> fast (no rerank)</label>
       <button id="search" disabled>Search</button>
     </div>
@@ -124,7 +126,7 @@ const DEFAULT_QUERY = {
 let sessionId = null;
 let nextId = 1;
 let selectedTool = null;
-let quickTool = null;
+let quickTools = [];
 let revealTimer = null;
 
 function loadServer(url) {
@@ -262,7 +264,7 @@ async function connect() {
 // Different servers name their search tool and its arguments differently, so bind to
 // whatever this one exposes rather than assuming search_literature.
 function bindQuickSearch(tools) {
-  quickTool = null;
+  quickTools = [];
 
   for (const tool of tools) {
     if (!/search|find|query/i.test(tool.name)) continue;
@@ -275,16 +277,49 @@ function bindQuickSearch(tools) {
       ['integer', 'number'].includes(properties[name].type) &&
       /^(k|limit|count|top|per_?page|max\w*)$/i.test(name));
 
-    quickTool = { tool, queryParam, countParam, hasFast: 'fast' in properties };
-    break;
+    quickTools.push({
+      tool,
+      queryParam,
+      countParam,
+      hasFast: 'fast' in properties,
+      hasSection: 'section' in properties,
+    });
   }
 
-  $('search').disabled = !quickTool;
-  $('fast').disabled = !quickTool?.hasFast;
-  $('quickHint').textContent = quickTool
-    ? `calls ${quickTool.tool.name}(${quickTool.queryParam}` +
-      `${quickTool.countParam ? ', ' + quickTool.countParam : ''})`
-    : 'This server exposes no recognisable search tool - use the Tools panel below.';
+  const picker = $('quickTool');
+  picker.innerHTML = '';
+  for (const [index, candidate] of quickTools.entries()) {
+    const option = document.createElement('option');
+    option.value = String(index);
+    option.textContent = candidate.tool.name;
+    picker.appendChild(option);
+  }
+
+  // Abstracts are the breadth tier, so default there rather than to whichever tool
+  // the server happened to list first.
+  const preferred = quickTools.findIndex(c => /literature|abstract|works/i.test(c.tool.name));
+  picker.value = String(preferred >= 0 ? preferred : 0);
+
+  picker.onchange = describeQuickTool;
+  $('search').disabled = quickTools.length === 0;
+  describeQuickTool();
+}
+
+function describeQuickTool() {
+  const candidate = quickTools[Number($('quickTool').value)];
+  if (!candidate) {
+    $('quickHint').textContent = 'This server exposes no recognisable search tool - use the Tools panel below.';
+    $('fast').disabled = true;
+    $('section').disabled = true;
+    return;
+  }
+
+  $('fast').disabled = !candidate.hasFast;
+  $('section').disabled = !candidate.hasSection;
+  $('quickHint').textContent =
+    `calls ${candidate.tool.name}(${candidate.queryParam}` +
+    `${candidate.countParam ? ', ' + candidate.countParam : ''}` +
+    `${candidate.hasSection ? ', section' : ''})`;
 }
 
 function renderTools(tools) {
@@ -339,12 +374,22 @@ function renderResults(response) {
 
   for (const [index, item] of payload.results.entries()) {
     const card = document.createElement('div');
+    // Abstract hits carry abstract_excerpt; passage hits carry the full passage text.
+    const body = item.text || item.abstract_excerpt || '';
+    const bits = [
+      item.year || '?',
+      `score ${item.score}`,
+      escapeHtml(item.article_key || ''),
+    ];
+    if (item.section) bits.push(escapeHtml(item.section));
+    if (item.pmid) bits.push('PMID ' + item.pmid);
+    if (item.is_retracted) bits.push('<strong style="color:#f38ba8">RETRACTED</strong>');
+
     card.className = 'card';
     card.innerHTML =
       `<h3>${index + 1}. ${escapeHtml(item.title || '(untitled)')}</h3>` +
-      `<div class="meta">${item.year || '?'} &middot; score ${item.score} &middot; ` +
-      `${escapeHtml(item.article_key)}${item.pmid ? ' &middot; PMID ' + item.pmid : ''}</div>` +
-      `<div class="excerpt">${escapeHtml(item.abstract_excerpt || '')}</div>`;
+      `<div class="meta">${bits.join(' &middot; ')}</div>` +
+      `<div class="excerpt">${escapeHtml(body)}</div>`;
     host.appendChild(card);
   }
 }
@@ -357,15 +402,18 @@ $('connect').onclick = connect;
 $('clearLog').onclick = () => $('log').textContent = '';
 
 $('search').onclick = async () => {
-  if (!quickTool) return;
+  const candidate = quickTools[Number($('quickTool').value)];
+  if (!candidate) return;
+
   $('search').disabled = true;
   $('results').innerHTML = '<div class="hint">searching...</div>';
   try {
-    const args = { [quickTool.queryParam]: $('query').value };
-    if (quickTool.countParam) args[quickTool.countParam] = Number($('k').value);
-    if (quickTool.hasFast) args.fast = $('fast').checked;
+    const args = { [candidate.queryParam]: $('query').value };
+    if (candidate.countParam) args[candidate.countParam] = Number($('k').value);
+    if (candidate.hasFast) args.fast = $('fast').checked;
+    if (candidate.hasSection && $('section').value.trim()) args.section = $('section').value.trim();
 
-    const response = await callTool(quickTool.tool.name, args);
+    const response = await callTool(candidate.tool.name, args);
     renderResults(response);
   } catch (error) {
     $('results').innerHTML = '';
