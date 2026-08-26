@@ -1,23 +1,9 @@
 {
-  "urls": "http://localhost:5173",
+  "urls": "http://localhost:6671",
   "servers": [
     {
       "name": "SciencePCM",
       "url": "https://www.sciencemcp.econlabs.org/mcp",
-      "toolOrder": [ "search_literature", "search_full_text" ],
-      "suggestions": {
-        "search_literature": {
-          "query": "What is the role of microglia in synaptic pruning?"
-        },
-        "search_full_text": {
-          "query": "What concentration of TTX is used to block sodium channels in slice recordings?",
-          "section": "Methods"
-        }
-      }
-    },
-    {
-      "name": "SciencePCM (local)",
-      "url": "http://localhost:8080/mcp",
       "toolOrder": [ "search_literature", "search_full_text" ],
       "suggestions": {
         "search_literature": {
