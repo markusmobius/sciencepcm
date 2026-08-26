@@ -15,7 +15,11 @@ public sealed class LiteratureTools(RetrievalService retrieval)
         "the tier to use for breadth - which papers exist on a topic, what a field says. " +
         "For specific findings, methods or numbers inside a paper, use search_full_text. " +
         "Use a full natural-language question rather than keywords; the reranker reads the " +
-        "question and the abstract together, so phrasing carries information.")]
+        "question and the abstract together, so phrasing carries information. " +
+        "Candidates are found lexically before being reranked, so a paper that uses different " +
+        "terminology to your question may not be found at all: if results look thin or you " +
+        "suspect other wording exists (a gene symbol vs its full name, 'chromosome' vs " +
+        "'genetics'), CALL THIS AGAIN with the alternative terms and merge what you get.")]
     public string SearchLiterature(
         [Description("The research question, in natural language.")] string query,
         [Description("How many papers to return. Default 10, maximum 50.")] int k = 10,
@@ -56,7 +60,9 @@ public sealed class LiteratureTools(RetrievalService retrieval)
         "section, so it can be quoted and attributed. " +
         "IMPORTANT: full text covers only about 23% of the corpus, so absence here does not " +
         "mean absence from the literature - fall back to search_literature for breadth. " +
-        "Retracted papers ARE included and flagged is_retracted; say so if you cite one.")]
+        "Retracted papers ARE included and flagged is_retracted; say so if you cite one. " +
+        "As with search_literature, candidates are found lexically, so re-query with the " +
+        "terminology a paper would actually use rather than the phrasing of the question.")]
     public string SearchFullText(
         [Description("The research question, in natural language.")] string query,
         [Description("How many passages to return. Default 10, maximum 50.")] int k = 10,
