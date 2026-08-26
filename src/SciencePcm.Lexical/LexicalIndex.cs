@@ -6,6 +6,7 @@ using Lucene.Net.Search;
 using Lucene.Net.Search.Similarities;
 using Lucene.Net.Store;
 using Lucene.Net.Util;
+using SciencePcm.Embed;
 
 namespace SciencePcm.Lexical;
 
@@ -18,7 +19,8 @@ public sealed record LexicalHit(
     string Pmid,
     string Section,
     bool IsRetracted,
-    float Score);
+    float Score,
+    BibliographicMetadata? Metadata = null);
 
 /// <summary>
 /// BM25 over the same text the dense side embeds. Lucene replaces the DuckDB FTS
@@ -37,6 +39,21 @@ public static class LexicalIndex
     public const string TitleField = "title";
     public const string YearField = "year";
     public const string PmidField = "pmid";
+    public const string PublicationDateField = "publication_date";
+    public const string DoiField = "doi";
+    public const string AuthorsField = "authors";
+    public const string InstitutionsField = "institutions";
+    public const string JournalField = "journal";
+    public const string IssnField = "issn";
+    public const string LanguageField = "language";
+    public const string WorkTypeField = "work_type";
+    public const string CitedByCountField = "cited_by_count";
+    public const string VolumeField = "volume";
+    public const string IssueField = "issue";
+    public const string FirstPageField = "first_page";
+    public const string LastPageField = "last_page";
+    public const string TopicsField = "topics";
+    public const string KeywordsField = "keywords";
     public const string SectionField = "section";
     public const string RetractedField = "retracted";
     public const string SearchField = "body_search";
@@ -52,10 +69,11 @@ public static class LexicalIndex
             new StringField(KeyField, source.ArticleKey, Field.Store.YES),
             new StoredField(TitleField, source.Title),
             new StoredField(BodyField, source.Body),
-            // The searchable copy carries the title, which is where much of the signal is.
+            // Bibliographic names are candidate anchors when matching prose that mentions
+            // researchers, institutions or venues but does not quote the abstract.
             new TextField(
                 SearchField,
-                string.IsNullOrEmpty(source.Title) ? source.Body : source.Title + ". " + source.Body,
+                SearchableText(source),
                 Field.Store.NO),
         };
 
@@ -67,6 +85,25 @@ public static class LexicalIndex
         if (!string.IsNullOrEmpty(source.Pmid))
         {
             document.Add(new StringField(PmidField, source.Pmid, Field.Store.YES));
+        }
+
+        if (source.Metadata is { } metadata)
+        {
+            AddStored(document, PublicationDateField, metadata.PublicationDate);
+            AddStored(document, DoiField, metadata.Doi);
+            AddStored(document, AuthorsField, metadata.Authors);
+            AddStored(document, InstitutionsField, metadata.Institutions);
+            AddStored(document, JournalField, metadata.Journal);
+            AddStored(document, IssnField, metadata.Issn);
+            AddStored(document, LanguageField, metadata.Language);
+            AddStored(document, WorkTypeField, metadata.WorkType);
+            AddStored(document, VolumeField, metadata.Volume);
+            AddStored(document, IssueField, metadata.Issue);
+            AddStored(document, FirstPageField, metadata.FirstPage);
+            AddStored(document, LastPageField, metadata.LastPage);
+            AddStored(document, TopicsField, metadata.Topics);
+            AddStored(document, KeywordsField, metadata.Keywords);
+            document.Add(new Int32Field(CitedByCountField, metadata.CitedByCount, Field.Store.YES));
         }
 
         if (!string.IsNullOrEmpty(source.Section))
@@ -81,6 +118,28 @@ public static class LexicalIndex
         }
 
         return document;
+    }
+
+    private static string SearchableText(ArticleDocument source)
+    {
+        var metadata = source.Metadata;
+        return string.Join(". ", new[]
+        {
+            source.Title,
+            source.Body,
+            metadata?.Authors,
+            metadata?.Institutions,
+            metadata?.Journal,
+            metadata?.Doi,
+            metadata?.Issn,
+            metadata?.Topics,
+            metadata?.Keywords,
+        }.Where(value => !string.IsNullOrWhiteSpace(value)));
+    }
+
+    private static void AddStored(Document document, string field, string value)
+    {
+        if (!string.IsNullOrEmpty(value)) document.Add(new StoredField(field, value));
     }
 
     public static string ArticleKeyOf(string id)
@@ -99,7 +158,8 @@ public sealed record ArticleDocument(
     int Year,
     string Pmid,
     string Section,
-    bool IsRetracted);
+    bool IsRetracted,
+    BibliographicMetadata? Metadata = null);
 
 public sealed class LexicalSearcher : IDisposable
 {
@@ -178,6 +238,23 @@ public sealed class LexicalSearcher : IDisposable
     private static LexicalHit ToHit(Document document, float score)
     {
         var year = document.Get(LexicalIndex.YearField);
+        var citedByCount = document.Get(LexicalIndex.CitedByCountField);
+        var metadata = new BibliographicMetadata(
+            document.Get(LexicalIndex.PublicationDateField) ?? "",
+            document.Get(LexicalIndex.DoiField) ?? "",
+            document.Get(LexicalIndex.AuthorsField) ?? "",
+            document.Get(LexicalIndex.InstitutionsField) ?? "",
+            document.Get(LexicalIndex.JournalField) ?? "",
+            document.Get(LexicalIndex.IssnField) ?? "",
+            document.Get(LexicalIndex.LanguageField) ?? "",
+            document.Get(LexicalIndex.WorkTypeField) ?? "",
+            int.TryParse(citedByCount, out var citations) ? citations : 0,
+            document.Get(LexicalIndex.VolumeField) ?? "",
+            document.Get(LexicalIndex.IssueField) ?? "",
+            document.Get(LexicalIndex.FirstPageField) ?? "",
+            document.Get(LexicalIndex.LastPageField) ?? "",
+            document.Get(LexicalIndex.TopicsField) ?? "",
+            document.Get(LexicalIndex.KeywordsField) ?? "");
         return new LexicalHit(
             document.Get(LexicalIndex.IdField),
             document.Get(LexicalIndex.KeyField),
@@ -187,7 +264,8 @@ public sealed class LexicalSearcher : IDisposable
             document.Get(LexicalIndex.PmidField) ?? "",
             document.Get(LexicalIndex.SectionField) ?? "",
             document.Get(LexicalIndex.RetractedField) == "true",
-            score);
+            score,
+            metadata);
     }
 
     public List<LexicalHit> SearchArticles(string query, int k, int? yearMin = null, int? yearMax = null)

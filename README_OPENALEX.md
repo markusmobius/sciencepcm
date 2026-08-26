@@ -8,6 +8,12 @@ The corpus is every work in the local OpenAlex snapshot for which
 `abstract_inverted_index` is nonempty. There is no neuroscience, year, topic or field
 filter and no full-text tier.
 
+The v2 digest is designed to resolve paper mentions in newspaper articles. In addition
+to title and abstract it retains publication date/year, authors, institutions, journal,
+ISSN, DOI, PMID, language, work type, citation count, volume/issue/pages, topics,
+keywords and retraction status. Lucene searches title, abstract, authors, institutions,
+journal, DOI, ISSN, topics and keywords; the other fields are returned for verification.
+
 ## Programs
 
 | Program | Runs on | Purpose |
@@ -45,6 +51,9 @@ After replacing or updating the snapshot, rebuild and overwrite the same cloud p
 ```powershell
 .\tools\openalex-sync.ps1 -Force
 ```
+
+Use `-Force` after changing the digest schema as well. The sync check compares file
+names, and rebuilt shards deliberately reuse the same names.
 
 For a bounded ingest smoke test without cloud transfer:
 

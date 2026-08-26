@@ -55,7 +55,7 @@ prepare() {
     if [[ ! -f "$INDEX/segments.gen" && -z "$(find "$INDEX" -maxdepth 1 -name 'segments_*' -print -quit 2>/dev/null)" ]]; then
         mkdir -p "$INDEX"
         dotnet run --project "$REPO/src/OpenAlex.Index" -c Release -- \
-            build --input "$ABSTRACTS/*.parquet" --schema abstracts \
+            build --input "$ABSTRACTS/*.parquet" --schema openalex \
             --out "$INDEX" --threads 16 --ram-buffer 4096
     else
         echo "OpenAlex Lucene index already present"

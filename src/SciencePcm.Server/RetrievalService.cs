@@ -27,7 +27,8 @@ public sealed record SearchResult(
     string Section,
     bool IsRetracted,
     float Score,
-    string Stage);
+    string Stage,
+    BibliographicMetadata? Metadata = null);
 
 /// <summary>
 /// BM25 retrieval followed by cross-encoder reranking.
@@ -174,9 +175,7 @@ public sealed class RetrievalService : IDisposable
         for (var start = 0; start < candidates.Count; start += _options.RerankBatch)
         {
             var slice = candidates.Skip(start).Take(_options.RerankBatch).ToList();
-            var passages = slice
-                .Select(c => string.IsNullOrEmpty(c.Title) ? c.Body : c.Title + ". " + c.Body)
-                .ToList();
+            var passages = slice.Select(RerankText).ToList();
 
             var batchScores = encoder.Score(query, passages);
             Array.Copy(batchScores, 0, scores, start, batchScores.Length);
@@ -184,6 +183,30 @@ public sealed class RetrievalService : IDisposable
 
         return scores;
     }
+
+    private static string RerankText(LexicalHit hit)
+    {
+        if (hit.Metadata is not { } metadata)
+        {
+            return string.IsNullOrEmpty(hit.Title) ? hit.Body : hit.Title + ". " + hit.Body;
+        }
+
+        // Keep newspaper-style identity clues visible inside the 512-token window,
+        // but cap prolific author/institution lists so the abstract still has room.
+        return string.Join(". ", new[]
+        {
+            hit.Title,
+            Limit(metadata.Authors, 400),
+            Limit(metadata.Journal, 200),
+            Limit(metadata.Institutions, 400),
+            Limit(metadata.Doi, 150),
+            Limit(metadata.Topics, 300),
+            hit.Body,
+        }.Where(value => !string.IsNullOrWhiteSpace(value)));
+    }
+
+    private static string Limit(string value, int length) =>
+        value.Length <= length ? value : value[..length];
 
     /// <summary>One thorough paper should not be able to fill the whole result set.</summary>
     private static IEnumerable<SearchResult> CapPerArticle(IEnumerable<SearchResult> results, int limit)
@@ -201,7 +224,7 @@ public sealed class RetrievalService : IDisposable
     }
 
     private static SearchResult ToResult(LexicalHit hit, float score, string stage) =>
-        new(hit.Id, hit.ArticleKey, hit.Title, hit.Body, hit.Year, hit.Pmid, hit.Section, hit.IsRetracted, score, stage);
+        new(hit.Id, hit.ArticleKey, hit.Title, hit.Body, hit.Year, hit.Pmid, hit.Section, hit.IsRetracted, score, stage, hit.Metadata);
 
     /// <summary>
     /// The corpus contains the same paper under several OpenAlex ids - the qualitative

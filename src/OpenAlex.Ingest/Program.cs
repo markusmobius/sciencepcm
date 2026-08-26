@@ -129,11 +129,27 @@ internal static class Program
                     openalex_id = work.Id,
                     title = work.Title ?? work.DisplayName,
                     @abstract = abstractText,
+                    publication_date = work.PublicationDate,
                     publication_year = work.PublicationYear,
                     pmid = work.Ids?.Pmid,
                     doi = work.Doi,
+                    authors = JoinDistinct(work.Authorships?.Select(authorship =>
+                        authorship.Author?.DisplayName ?? authorship.RawAuthorName)),
+                    institutions = JoinDistinct(work.Authorships?
+                        .SelectMany(authorship => authorship.Institutions ?? [])
+                        .Select(institution => institution.DisplayName)),
+                    journal = work.PrimaryLocation?.Source?.DisplayName
+                        ?? work.PrimaryLocation?.RawSourceName,
+                    issn = work.PrimaryLocation?.Source?.IssnL,
                     language = work.Language,
                     type = work.Type,
+                    cited_by_count = work.CitedByCount,
+                    volume = work.Biblio?.Volume,
+                    issue = work.Biblio?.Issue,
+                    first_page = work.Biblio?.FirstPage,
+                    last_page = work.Biblio?.LastPage,
+                    topics = JoinDistinct(work.Topics?.Select(topic => topic.DisplayName)),
+                    keywords = JoinDistinct(work.Keywords?.Select(keyword => keyword.DisplayName)),
                     is_retracted = work.IsRetracted,
                 }, cancellationToken);
             }
@@ -165,6 +181,16 @@ internal static class Program
         }
 
         return string.Join(' ', words.Where(word => word is not null));
+    }
+
+    private static string? JoinDistinct(IEnumerable<string?>? values)
+    {
+        if (values is null) return null;
+        var joined = string.Join("; ", values
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value!.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase));
+        return joined.Length == 0 ? null : joined;
     }
 
     private static async Task WriteAsync(
@@ -213,7 +239,7 @@ internal static class Program
             dataset_name = "OpenAlex abstracts",
             created_at = DateTimeOffset.UtcNow,
             input = Path.GetFullPath(options.Input),
-            output_schema = "openalex-abstracts-v1",
+            output_schema = "openalex-abstracts-v2",
             shard_size = options.ShardSize,
             counts = new
             {
@@ -240,17 +266,56 @@ internal sealed class OpenAlexWork
     [JsonPropertyName("doi")] public string? Doi { get; set; }
     [JsonPropertyName("title")] public string? Title { get; set; }
     [JsonPropertyName("display_name")] public string? DisplayName { get; set; }
+    [JsonPropertyName("publication_date")] public string? PublicationDate { get; set; }
     [JsonPropertyName("publication_year")] public int? PublicationYear { get; set; }
     [JsonPropertyName("ids")] public OpenAlexIds? Ids { get; set; }
     [JsonPropertyName("abstract_inverted_index")] public Dictionary<string, int[]>? AbstractInvertedIndex { get; set; }
+    [JsonPropertyName("authorships")] public List<OpenAlexAuthorship>? Authorships { get; set; }
+    [JsonPropertyName("primary_location")] public OpenAlexLocation? PrimaryLocation { get; set; }
     [JsonPropertyName("language")] public string? Language { get; set; }
     [JsonPropertyName("type")] public string? Type { get; set; }
+    [JsonPropertyName("cited_by_count")] public int CitedByCount { get; set; }
+    [JsonPropertyName("biblio")] public OpenAlexBiblio? Biblio { get; set; }
+    [JsonPropertyName("topics")] public List<OpenAlexNamedEntity>? Topics { get; set; }
+    [JsonPropertyName("keywords")] public List<OpenAlexNamedEntity>? Keywords { get; set; }
     [JsonPropertyName("is_retracted")] public bool IsRetracted { get; set; }
 }
 
 internal sealed class OpenAlexIds
 {
     [JsonPropertyName("pmid")] public string? Pmid { get; set; }
+}
+
+internal sealed class OpenAlexAuthorship
+{
+    [JsonPropertyName("author")] public OpenAlexNamedEntity? Author { get; set; }
+    [JsonPropertyName("raw_author_name")] public string? RawAuthorName { get; set; }
+    [JsonPropertyName("institutions")] public List<OpenAlexNamedEntity>? Institutions { get; set; }
+}
+
+internal sealed class OpenAlexNamedEntity
+{
+    [JsonPropertyName("display_name")] public string? DisplayName { get; set; }
+}
+
+internal sealed class OpenAlexLocation
+{
+    [JsonPropertyName("source")] public OpenAlexSource? Source { get; set; }
+    [JsonPropertyName("raw_source_name")] public string? RawSourceName { get; set; }
+}
+
+internal sealed class OpenAlexSource
+{
+    [JsonPropertyName("display_name")] public string? DisplayName { get; set; }
+    [JsonPropertyName("issn_l")] public string? IssnL { get; set; }
+}
+
+internal sealed class OpenAlexBiblio
+{
+    [JsonPropertyName("volume")] public string? Volume { get; set; }
+    [JsonPropertyName("issue")] public string? Issue { get; set; }
+    [JsonPropertyName("first_page")] public string? FirstPage { get; set; }
+    [JsonPropertyName("last_page")] public string? LastPage { get; set; }
 }
 
 #pragma warning disable IDE1006
@@ -260,11 +325,23 @@ internal sealed class OpenAlexAbstractRow
     public string openalex_id { get; set; } = "";
     public string? title { get; set; }
     public string? @abstract { get; set; }
+    public string? publication_date { get; set; }
     public int? publication_year { get; set; }
     public string? pmid { get; set; }
     public string? doi { get; set; }
+    public string? authors { get; set; }
+    public string? institutions { get; set; }
+    public string? journal { get; set; }
+    public string? issn { get; set; }
     public string? language { get; set; }
     public string? type { get; set; }
+    public int cited_by_count { get; set; }
+    public string? volume { get; set; }
+    public string? issue { get; set; }
+    public string? first_page { get; set; }
+    public string? last_page { get; set; }
+    public string? topics { get; set; }
+    public string? keywords { get; set; }
     public bool is_retracted { get; set; }
 }
 #pragma warning restore IDE1006

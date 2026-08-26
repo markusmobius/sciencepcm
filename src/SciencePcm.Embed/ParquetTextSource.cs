@@ -15,12 +15,33 @@ public sealed record ArticleRecord(
     int Year,
     string Pmid,
     string Section,
-    bool IsRetracted);
+    bool IsRetracted,
+    BibliographicMetadata? Metadata = null);
+
+public sealed record BibliographicMetadata(
+    string PublicationDate,
+    string Doi,
+    string Authors,
+    string Institutions,
+    string Journal,
+    string Issn,
+    string Language,
+    string WorkType,
+    int CitedByCount,
+    string Volume,
+    string Issue,
+    string FirstPage,
+    string LastPage,
+    string Topics,
+    string Keywords);
 
 public enum CorpusSchema
 {
     /// <summary>OpenAlex-neuroscience-abstracts: openalex_id, title, abstract.</summary>
     Abstracts,
+
+    /// <summary>OpenAlex.Ingest v2 output with bibliographic matching metadata.</summary>
+    OpenAlex,
 
     /// <summary>SciencePcm.Ingest output: ChunkId, Title, Text.</summary>
     Chunks,
@@ -63,6 +84,32 @@ public static class ParquetTextSource
         public string? pmid { get; set; }
     }
 
+    private sealed class OpenAlexMetaRow
+    {
+        [ParquetRequired]
+        public string openalex_id { get; set; } = "";
+        public string? title { get; set; }
+        public string? @abstract { get; set; }
+        public string? publication_date { get; set; }
+        public int? publication_year { get; set; }
+        public string? pmid { get; set; }
+        public string? doi { get; set; }
+        public string? authors { get; set; }
+        public string? institutions { get; set; }
+        public string? journal { get; set; }
+        public string? issn { get; set; }
+        public string? language { get; set; }
+        public string? type { get; set; }
+        public int cited_by_count { get; set; }
+        public string? volume { get; set; }
+        public string? issue { get; set; }
+        public string? first_page { get; set; }
+        public string? last_page { get; set; }
+        public string? topics { get; set; }
+        public string? keywords { get; set; }
+        public bool is_retracted { get; set; }
+    }
+
     // IsRetracted is a non-nullable bool in ChunkRow, so it is required here too;
     // Parquet.Net throws if the nullability does not match the file exactly.
     private sealed class ChunkMetaRow
@@ -101,7 +148,7 @@ public static class ParquetTextSource
         {
             await using var stream = File.OpenRead(path);
 
-            if (schema == CorpusSchema.Abstracts)
+            if (schema is CorpusSchema.Abstracts or CorpusSchema.OpenAlex)
             {
                 foreach (var row in (await ParquetSerializer.DeserializeAsync<AbstractRow>(stream)).Data)
                 {
@@ -158,6 +205,38 @@ public static class ParquetTextSource
                         row.pmid ?? "",
                         Section: "",
                         IsRetracted: false);
+                }
+            }
+            else if (schema == CorpusSchema.OpenAlex)
+            {
+                foreach (var row in (await ParquetSerializer.DeserializeAsync<OpenAlexMetaRow>(stream)).Data)
+                {
+                    if (string.IsNullOrEmpty(row.openalex_id) || string.IsNullOrWhiteSpace(row.@abstract)) continue;
+                    yield return new ArticleRecord(
+                        row.openalex_id,
+                        row.openalex_id,
+                        row.title ?? "",
+                        row.@abstract!,
+                        row.publication_year ?? 0,
+                        row.pmid ?? "",
+                        Section: "",
+                        row.is_retracted,
+                        new BibliographicMetadata(
+                            row.publication_date ?? "",
+                            row.doi ?? "",
+                            row.authors ?? "",
+                            row.institutions ?? "",
+                            row.journal ?? "",
+                            row.issn ?? "",
+                            row.language ?? "",
+                            row.type ?? "",
+                            row.cited_by_count,
+                            row.volume ?? "",
+                            row.issue ?? "",
+                            row.first_page ?? "",
+                            row.last_page ?? "",
+                            row.topics ?? "",
+                            row.keywords ?? ""));
                 }
             }
             else

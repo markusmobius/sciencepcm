@@ -75,7 +75,8 @@ public static class Program
                     record.Year,
                     record.Pmid,
                     record.Section,
-                    record.IsRetracted)));
+                    record.IsRetracted,
+                    record.Metadata)));
 
                 var count = Interlocked.Increment(ref indexed);
                 if (count % 500_000 == 0)
@@ -213,7 +214,7 @@ public static class Program
         BM25 retrieval over the ingest Parquet, using Lucene.NET.
 
         build --input <glob> --out <dir> [options]
-          --schema abstracts|chunks   Default: abstracts
+          --schema abstracts|openalex|chunks   Default: abstracts
           --threads <n>               Indexing threads. Default: 8
           --ram-buffer <mb>           Writer buffer. Default: 512
           --optimize                  Merge to one segment. Slow to build, faster to query.
@@ -270,6 +271,7 @@ public sealed class BuildOptions
                     options.Schema = Next().ToLowerInvariant() switch
                     {
                         "abstracts" => CorpusSchema.Abstracts,
+                        "openalex" => CorpusSchema.OpenAlex,
                         "chunks" => CorpusSchema.Chunks,
                         var other => throw new ArgumentException($"Unknown schema '{other}'."),
                     };

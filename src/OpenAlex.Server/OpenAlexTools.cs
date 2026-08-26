@@ -12,12 +12,13 @@ public sealed class OpenAlexTools(RetrievalService retrieval)
 
     [McpServerTool(Name = "search_openalex")]
     [Description(
-        "Search abstracts across the unfiltered OpenAlex works snapshot. Use a natural-language " +
-        "question and retry with alternative terminology when recall matters: BM25 produces the " +
-        "candidate set before a cross-encoder reranks it. Results cover every discipline but only " +
-        "works for which OpenAlex supplies an abstract.")]
+        "Find papers across the unfiltered OpenAlex works snapshot. The query may be a research " +
+        "question, a claim or passage from a newspaper article, or remembered bibliographic clues. " +
+        "Titles, abstracts, authors, institutions, journals, DOI, ISSN, topics and keywords are " +
+        "searched before a cross-encoder reranks candidates. Retry with names or alternate terms " +
+        "when recall matters. Only works for which OpenAlex supplies an abstract are included.")]
     public string SearchOpenAlex(
-        [Description("The research question, in natural language.")] string query,
+        [Description("A question, news passage, claim, title fragment, author, institution, journal or identifier.")] string query,
         [Description("How many works to return. Default 10, maximum 50.")] int k = 10,
         [Description("Only include works published in or after this year.")] int? yearMin = null,
         [Description("Only include works published in or before this year.")] int? yearMax = null,
@@ -34,8 +35,18 @@ public sealed class OpenAlexTools(RetrievalService retrieval)
             {
                 openalex_id = result.ArticleKey,
                 title = result.Title,
+                authors = Value(result.Metadata?.Authors),
+                institutions = Value(result.Metadata?.Institutions),
+                journal = Value(result.Metadata?.Journal),
+                publication_date = Value(result.Metadata?.PublicationDate),
                 year = result.Year,
+                doi = Value(result.Metadata?.Doi),
                 pmid = string.IsNullOrEmpty(result.Pmid) ? null : result.Pmid,
+                type = Value(result.Metadata?.WorkType),
+                language = Value(result.Metadata?.Language),
+                cited_by_count = result.Metadata?.CitedByCount,
+                topics = Value(result.Metadata?.Topics),
+                is_retracted = result.IsRetracted,
                 score = Math.Round(result.Score, 3),
                 abstract_excerpt = Excerpt(result.Text, 500),
             }),
@@ -57,8 +68,24 @@ public sealed class OpenAlexTools(RetrievalService retrieval)
         {
             openalex_id = work.ArticleKey,
             title = work.Title,
+            authors = Value(work.Metadata?.Authors),
+            institutions = Value(work.Metadata?.Institutions),
+            journal = Value(work.Metadata?.Journal),
+            issn = Value(work.Metadata?.Issn),
+            publication_date = Value(work.Metadata?.PublicationDate),
             year = work.Year,
+            doi = Value(work.Metadata?.Doi),
             pmid = string.IsNullOrEmpty(work.Pmid) ? null : work.Pmid,
+            type = Value(work.Metadata?.WorkType),
+            language = Value(work.Metadata?.Language),
+            cited_by_count = work.Metadata?.CitedByCount,
+            volume = Value(work.Metadata?.Volume),
+            issue = Value(work.Metadata?.Issue),
+            first_page = Value(work.Metadata?.FirstPage),
+            last_page = Value(work.Metadata?.LastPage),
+            topics = Value(work.Metadata?.Topics),
+            keywords = Value(work.Metadata?.Keywords),
+            is_retracted = work.IsRetracted,
             @abstract = work.Text,
         }, Json);
     }
@@ -87,4 +114,6 @@ public sealed class OpenAlexTools(RetrievalService retrieval)
         var cut = text.LastIndexOf(' ', Math.Min(limit, text.Length - 1));
         return text[..(cut > 0 ? cut : limit)] + " ...";
     }
+
+    private static string? Value(string? value) => string.IsNullOrEmpty(value) ? null : value;
 }
