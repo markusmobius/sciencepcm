@@ -45,9 +45,6 @@
     <div>
       <label for="server">Server</label>
       <select id="server" style="min-width:170px">
-        <option value="https://www.sciencemcp.econlabs.org/mcp">SciencePCM</option>
-        <option value="https://www.academic.econlabs.org/mcp">EconMCP</option>
-        <option value="http://localhost:8080/mcp">Local (8080)</option>
         <option value="custom">Custom...</option>
       </select>
     </div>
@@ -116,23 +113,25 @@ const $ = id => document.getElementById(id);
 // server's credential to another.
 const tokenKey = url => 'mcp.token:' + url;
 
-// A question that actually exercises each server, so the first click is informative.
-const DEFAULT_QUERY = {
-  'https://www.sciencemcp.econlabs.org/mcp': 'What is the role of microglia in synaptic pruning?',
-  'http://localhost:8080/mcp': 'What is the role of microglia in synaptic pruning?',
-  'https://www.academic.econlabs.org/mcp': 'Papers by Brendan Lucier in AER',
-};
+// Presets come from config.json. Without it the console still works against any MCP
+// server, just with no server list and no suggested inputs.
+let appConfig = { servers: [] };
+
+const serverConfig = () => appConfig.servers.find(s => s.url === $('url').value);
 
 let sessionId = null;
 let nextId = 1;
 let selectedTool = null;
 let quickTools = [];
 let revealTimer = null;
+let queryEdited = false;
 
 function loadServer(url) {
   $('url').value = url;
   $('token').value = localStorage.getItem(tokenKey(url)) || '';
-  $('query').value = DEFAULT_QUERY[url] || '';
+  $('query').value = '';
+  $('section').value = '';
+  queryEdited = false;
   localStorage.setItem('mcp.lastUrl', url);
   sessionId = null;
   setStatus('not connected');
@@ -146,16 +145,32 @@ function showPanels(visible) {
   $('placeholder').hidden = visible;
 }
 
-function initServerPicker() {
-  const last = localStorage.getItem('mcp.lastUrl') || $('server').value;
-  const known = [...$('server').options].some(o => o.value === last);
+async function initServerPicker() {
+  try {
+    appConfig = await (await fetch('/config')).json();
+  } catch {
+    appConfig = { servers: [] };
+  }
 
-  $('server').value = known ? last : 'custom';
+  const picker = $('server');
+  for (const server of appConfig.servers || []) {
+    const option = document.createElement('option');
+    option.value = server.url;
+    option.textContent = server.name || server.url;
+    picker.insertBefore(option, picker.lastElementChild);
+  }
+
+  const last = localStorage.getItem('mcp.lastUrl')
+    || appConfig.servers?.[0]?.url
+    || '';
+  const known = [...picker.options].some(o => o.value === last);
+
+  picker.value = known ? last : 'custom';
   $('url').readOnly = known;
   loadServer(last);
 
-  $('server').addEventListener('change', () => {
-    const choice = $('server').value;
+  picker.addEventListener('change', () => {
+    const choice = picker.value;
     if (choice === 'custom') {
       $('url').readOnly = false;
       $('url').focus();
@@ -168,6 +183,7 @@ function initServerPicker() {
   $('url').addEventListener('change', () => loadServer($('url').value.trim()));
   $('token').addEventListener('change', () =>
     localStorage.setItem(tokenKey($('url').value), $('token').value));
+  $('query').addEventListener('input', () => queryEdited = true);
 }
 
 $('reveal').onclick = () => {
@@ -288,6 +304,14 @@ function bindQuickSearch(tools) {
 
   const picker = $('quickTool');
   picker.innerHTML = '';
+
+  // Config may state a preferred order; anything not listed keeps server order behind it.
+  const order = serverConfig()?.toolOrder || [];
+  quickTools.sort((a, b) => {
+    const rank = name => (order.indexOf(name) + 1 || Number.MAX_SAFE_INTEGER);
+    return rank(a.tool.name) - rank(b.tool.name);
+  });
+
   for (const [index, candidate] of quickTools.entries()) {
     const option = document.createElement('option');
     option.value = String(index);
@@ -295,11 +319,7 @@ function bindQuickSearch(tools) {
     picker.appendChild(option);
   }
 
-  // Abstracts are the breadth tier, so default there rather than to whichever tool
-  // the server happened to list first.
-  const preferred = quickTools.findIndex(c => /literature|abstract|works/i.test(c.tool.name));
-  picker.value = String(preferred >= 0 ? preferred : 0);
-
+  picker.value = '0';
   picker.onchange = describeQuickTool;
   $('search').disabled = quickTools.length === 0;
   describeQuickTool();
@@ -316,6 +336,14 @@ function describeQuickTool() {
 
   $('fast').disabled = !candidate.hasFast;
   $('section').disabled = !candidate.hasSection;
+
+  // Suggestions are per tool, so switching tier offers a question that tier can answer.
+  const suggestion = serverConfig()?.suggestions?.[candidate.tool.name];
+  if (suggestion && !queryEdited) {
+    $('query').value = suggestion.query || '';
+    $('section').value = candidate.hasSection ? (suggestion.section || '') : '';
+  }
+
   $('quickHint').textContent =
     `calls ${candidate.tool.name}(${candidate.queryParam}` +
     `${candidate.countParam ? ', ' + candidate.countParam : ''}` +
