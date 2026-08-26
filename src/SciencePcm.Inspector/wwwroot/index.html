@@ -27,7 +27,9 @@
   h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .07em; color: #9aa4b2; margin: 0 0 8px; }
   .card { background: #1b1f26; border: 1px solid #2b313b; border-radius: 8px; padding: 12px 14px; margin-bottom: 8px; }
   .card h3 { margin: 0 0 4px; font-size: 14px; }
-  .meta { font-size: 12px; color: #9aa4b2; margin-bottom: 6px; }
+  .meta { font-size: 12px; color: #9aa4b2; margin-bottom: 3px; overflow-wrap: anywhere; }
+  .bibliography { font-size: 12px; color: #b8c0cc; margin-bottom: 6px; overflow-wrap: anywhere; }
+  .meta a, .bibliography a { color: #89b4fa; }
   .excerpt { font-size: 13px; line-height: 1.45; color: #c8cdd4; }
   pre { background: #10131a; border: 1px solid #2b313b; border-radius: 6px; padding: 10px;
     overflow: auto; max-height: 420px; font-size: 12px; }
@@ -405,21 +407,38 @@ function renderResults(response) {
     // Abstract hits carry abstract_excerpt; passage hits carry the full passage text.
     const body = item.text || item.abstract_excerpt || '';
     const bits = [
-      item.year || '?',
+      escapeHtml(item.publication_date || item.year || '?'),
       `score ${item.score}`,
       escapeHtml(item.article_key || ''),
     ];
     if (item.section) bits.push(escapeHtml(item.section));
-    if (item.pmid) bits.push('PMID ' + item.pmid);
+    if (item.pmid) bits.push('PMID ' + escapeHtml(item.pmid));
+    if (item.pmcid) bits.push(escapeHtml(item.pmcid));
     if (item.is_retracted) bits.push('<strong style="color:#f38ba8">RETRACTED</strong>');
+
+    const bibliography = [];
+    if (item.authors) bibliography.push(escapeHtml(item.authors));
+    if (item.journal) bibliography.push(`<em>${escapeHtml(item.journal)}</em>`);
+    if (item.doi) bibliography.push(doiLink(item.doi));
+    if (item.cited_by_count !== null && item.cited_by_count !== undefined) {
+      bibliography.push(`${item.cited_by_count} citations`);
+    }
+    if (item.is_open_access === true) bibliography.push('open access');
 
     card.className = 'card';
     card.innerHTML =
       `<h3>${index + 1}. ${escapeHtml(item.title || '(untitled)')}</h3>` +
       `<div class="meta">${bits.join(' &middot; ')}</div>` +
+      (bibliography.length ? `<div class="bibliography">${bibliography.join(' &middot; ')}</div>` : '') +
       `<div class="excerpt">${escapeHtml(body)}</div>`;
     host.appendChild(card);
   }
+}
+
+function doiLink(value) {
+  const text = String(value);
+  const href = text.startsWith('http') ? text : `https://doi.org/${text.replace(/^doi:/i, '')}`;
+  return `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(text)}</a>`;
 }
 
 function escapeHtml(value) {
