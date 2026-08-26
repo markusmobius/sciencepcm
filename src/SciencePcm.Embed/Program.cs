@@ -43,6 +43,26 @@ internal static class Program
     {
         Console.WriteLine($"model     : {options.ModelDirectory}");
         Console.WriteLine($"tokenizer : {CrossEncoderFactory.Describe(options.ModelDirectory)}");
+
+        // The generated tokenizer graph is opaque until you look at it, and its input and
+        // output names differ between onnxruntime-extensions versions.
+        var tokenizerPath = Path.Combine(options.ModelDirectory, "tokenizer.onnx");
+        if (File.Exists(tokenizerPath))
+        {
+            var sessionOptions = new Microsoft.ML.OnnxRuntime.SessionOptions();
+            sessionOptions.RegisterOrtExtensions();
+            using var probe = new Microsoft.ML.OnnxRuntime.InferenceSession(tokenizerPath, sessionOptions);
+
+            foreach (var (name, meta) in probe.InputMetadata)
+            {
+                Console.WriteLine($"  in  {name,-18} {meta.ElementType} [{string.Join(",", meta.Dimensions)}]");
+            }
+            foreach (var (name, meta) in probe.OutputMetadata)
+            {
+                Console.WriteLine($"  out {name,-18} {meta.ElementType} [{string.Join(",", meta.Dimensions)}]");
+            }
+        }
+
         Console.WriteLine();
 
         using var encoder = CrossEncoderFactory.Create(
