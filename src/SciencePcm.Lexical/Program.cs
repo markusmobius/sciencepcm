@@ -39,6 +39,7 @@ public static class Program
     {
         Console.WriteLine($"input   : {options.Input}");
         Console.WriteLine($"schema  : {options.Schema}");
+        if (options.Metadata is not null) Console.WriteLine($"metadata: {options.Metadata}");
         Console.WriteLine($"out     : {options.Output}");
         Console.WriteLine();
 
@@ -87,7 +88,7 @@ public static class Program
             }
         })).ToArray();
 
-        await foreach (var record in ParquetTextSource.ReadArticlesAsync(options.Input, options.Schema))
+        await foreach (var record in ParquetTextSource.ReadArticlesAsync(options.Input, options.Schema, options.Metadata))
         {
             if (string.IsNullOrWhiteSpace(record.Body))
             {
@@ -215,6 +216,7 @@ public static class Program
 
         build --input <glob> --out <dir> [options]
           --schema abstracts|openalex|chunks   Default: abstracts
+                    --metadata <glob>            Article metadata to join when schema is chunks.
           --threads <n>               Indexing threads. Default: 8
           --ram-buffer <mb>           Writer buffer. Default: 512
           --optimize                  Merge to one segment. Slow to build, faster to query.
@@ -250,6 +252,7 @@ public sealed class BuildOptions
     public string Input { get; private set; } = "";
     public string Output { get; private set; } = "";
     public CorpusSchema Schema { get; private set; } = CorpusSchema.Abstracts;
+    public string? Metadata { get; private set; }
     public int Threads { get; private set; } = 8;
     public double RamBufferMb { get; private set; } = 512;
     public bool Optimize { get; private set; }
@@ -266,6 +269,7 @@ public sealed class BuildOptions
             switch (args[i])
             {
                 case "--input": options.Input = Next(); break;
+                case "--metadata": options.Metadata = Next(); break;
                 case "--out": options.Output = Next(); break;
                 case "--schema":
                     options.Schema = Next().ToLowerInvariant() switch

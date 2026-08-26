@@ -54,6 +54,12 @@ public static class LexicalIndex
     public const string LastPageField = "last_page";
     public const string TopicsField = "topics";
     public const string KeywordsField = "keywords";
+    public const string PmcidField = "pmcid";
+    public const string PublisherField = "publisher";
+    public const string LandingPageUrlField = "landing_page_url";
+    public const string PdfUrlField = "pdf_url";
+    public const string LicenseField = "license";
+    public const string OpenAccessField = "open_access";
     public const string SectionField = "section";
     public const string RetractedField = "retracted";
     public const string SearchField = "body_search";
@@ -103,7 +109,19 @@ public static class LexicalIndex
             AddStored(document, LastPageField, metadata.LastPage);
             AddStored(document, TopicsField, metadata.Topics);
             AddStored(document, KeywordsField, metadata.Keywords);
-            document.Add(new Int32Field(CitedByCountField, metadata.CitedByCount, Field.Store.YES));
+            AddStored(document, PmcidField, metadata.Pmcid);
+            AddStored(document, PublisherField, metadata.Publisher);
+            AddStored(document, LandingPageUrlField, metadata.LandingPageUrl);
+            AddStored(document, PdfUrlField, metadata.PdfUrl);
+            AddStored(document, LicenseField, metadata.License);
+            if (metadata.IsOpenAccess is { } isOpenAccess)
+            {
+                document.Add(new StringField(OpenAccessField, isOpenAccess ? "true" : "false", Field.Store.YES));
+            }
+            if (metadata.CitedByCount is { } citedByCount)
+            {
+                document.Add(new Int32Field(CitedByCountField, citedByCount, Field.Store.YES));
+            }
         }
 
         if (!string.IsNullOrEmpty(source.Section))
@@ -131,7 +149,9 @@ public static class LexicalIndex
             metadata?.Institutions,
             metadata?.Journal,
             metadata?.Doi,
+            metadata?.Pmcid,
             metadata?.Issn,
+            metadata?.Publisher,
             metadata?.Topics,
             metadata?.Keywords,
         }.Where(value => !string.IsNullOrWhiteSpace(value)));
@@ -248,13 +268,24 @@ public sealed class LexicalSearcher : IDisposable
             document.Get(LexicalIndex.IssnField) ?? "",
             document.Get(LexicalIndex.LanguageField) ?? "",
             document.Get(LexicalIndex.WorkTypeField) ?? "",
-            int.TryParse(citedByCount, out var citations) ? citations : 0,
+            int.TryParse(citedByCount, out var citations) ? citations : null,
             document.Get(LexicalIndex.VolumeField) ?? "",
             document.Get(LexicalIndex.IssueField) ?? "",
             document.Get(LexicalIndex.FirstPageField) ?? "",
             document.Get(LexicalIndex.LastPageField) ?? "",
             document.Get(LexicalIndex.TopicsField) ?? "",
-            document.Get(LexicalIndex.KeywordsField) ?? "");
+            document.Get(LexicalIndex.KeywordsField) ?? "",
+            document.Get(LexicalIndex.PmcidField) ?? "",
+            document.Get(LexicalIndex.PublisherField) ?? "",
+            document.Get(LexicalIndex.LandingPageUrlField) ?? "",
+            document.Get(LexicalIndex.PdfUrlField) ?? "",
+            document.Get(LexicalIndex.LicenseField) ?? "",
+            document.Get(LexicalIndex.OpenAccessField) switch
+            {
+                "true" => true,
+                "false" => false,
+                _ => null,
+            });
         return new LexicalHit(
             document.Get(LexicalIndex.IdField),
             document.Get(LexicalIndex.KeyField),

@@ -44,8 +44,15 @@ public sealed class LiteratureTools(RetrievalService retrieval)
             {
                 article_key = r.ArticleKey,
                 title = r.Title,
+                authors = Value(r.Metadata?.Authors),
+                journal = Value(r.Metadata?.Journal),
+                publication_date = Value(r.Metadata?.PublicationDate),
                 year = r.Year,
+                doi = Value(r.Metadata?.Doi),
                 pmid = string.IsNullOrEmpty(r.Pmid) ? null : r.Pmid,
+                pmcid = Value(r.Metadata?.Pmcid),
+                cited_by_count = r.Metadata?.CitedByCount,
+                is_open_access = r.Metadata?.IsOpenAccess,
                 score = Math.Round(r.Score, 3),
                 // Truncated deliberately: full abstracts for 10 papers would crowd out the
                 // caller's context. get_paper returns the whole thing on request.
@@ -103,7 +110,13 @@ public sealed class LiteratureTools(RetrievalService retrieval)
                 passage_id = r.Id,
                 article_key = r.ArticleKey,
                 title = r.Title,
+                authors = Value(r.Metadata?.Authors),
+                journal = Value(r.Metadata?.Journal),
+                publication_date = Value(r.Metadata?.PublicationDate),
                 year = r.Year,
+                doi = Value(r.Metadata?.Doi),
+                pmid = string.IsNullOrEmpty(r.Pmid) ? null : r.Pmid,
+                pmcid = Value(r.Metadata?.Pmcid),
                 section = string.IsNullOrEmpty(r.Section) ? null : r.Section,
                 is_retracted = r.IsRetracted,
                 score = Math.Round(r.Score, 3),
@@ -160,8 +173,24 @@ public sealed class LiteratureTools(RetrievalService retrieval)
         {
             article_key = paper.ArticleKey,
             title = paper.Title,
+            authors = Value(paper.Metadata?.Authors),
+            journal = Value(paper.Metadata?.Journal),
+            publisher = Value(paper.Metadata?.Publisher),
+            publication_date = Value(paper.Metadata?.PublicationDate),
             year = paper.Year,
+            doi = Value(paper.Metadata?.Doi),
             pmid = string.IsNullOrEmpty(paper.Pmid) ? null : paper.Pmid,
+            pmcid = Value(paper.Metadata?.Pmcid),
+            issn = Value(paper.Metadata?.Issn),
+            type = Value(paper.Metadata?.WorkType),
+            language = Value(paper.Metadata?.Language),
+            cited_by_count = paper.Metadata?.CitedByCount,
+            keywords = Value(paper.Metadata?.Keywords),
+            is_open_access = paper.Metadata?.IsOpenAccess,
+            landing_page_url = Value(paper.Metadata?.LandingPageUrl),
+            pdf_url = Value(paper.Metadata?.PdfUrl),
+            license = Value(paper.Metadata?.License),
+            is_retracted = paper.IsRetracted,
             @abstract = paper.Text,
         }, Json);
     }
@@ -199,6 +228,11 @@ public sealed class LiteratureTools(RetrievalService retrieval)
                 : null,
             source = "OpenAlex, filtered to any topic in field 28 (neuroscience)",
             retrieval = "BM25 (Lucene EnglishAnalyzer) then MedCPT cross-encoder reranking",
+            metadata = new
+            {
+                abstracts = "DOI, PMID, PMCID, publication date, journal, citations, language, type and open-access links",
+                full_text = "DOI, PMID, PMCID, authors, publication date, journal, publisher, ISSN, type, keywords and license",
+            },
             caveats = new[]
             {
                 "The field-28 filter is broad, so some papers are only tangentially neuroscience.",
@@ -214,4 +248,6 @@ public sealed class LiteratureTools(RetrievalService retrieval)
         var cut = text.LastIndexOf(' ', Math.Min(limit, text.Length - 1));
         return text[..(cut > 0 ? cut : limit)] + " ...";
     }
+
+    private static string? Value(string? value) => string.IsNullOrEmpty(value) ? null : value;
 }

@@ -27,13 +27,19 @@ public sealed record BibliographicMetadata(
     string Issn,
     string Language,
     string WorkType,
-    int CitedByCount,
+    int? CitedByCount,
     string Volume,
     string Issue,
     string FirstPage,
     string LastPage,
     string Topics,
-    string Keywords);
+    string Keywords,
+    string Pmcid = "",
+    string Publisher = "",
+    string LandingPageUrl = "",
+    string PdfUrl = "",
+    string License = "",
+    bool? IsOpenAccess = null);
 
 public enum CorpusSchema
 {
@@ -78,10 +84,23 @@ public static class ParquetTextSource
     {
         [ParquetRequired]
         public string openalex_id { get; set; } = "";
+        public string? doi { get; set; }
         public string? title { get; set; }
         public string? @abstract { get; set; }
+        public string? publication_date { get; set; }
         public int? publication_year { get; set; }
         public string? pmid { get; set; }
+        public string? pmcid { get; set; }
+        public string? language { get; set; }
+        public string? work_type { get; set; }
+        public long? cited_by_count { get; set; }
+        public bool? is_oa { get; set; }
+        public string? best_oa_landing_page_url { get; set; }
+        public string? best_oa_pdf_url { get; set; }
+        public string? best_oa_license { get; set; }
+        public string? primary_landing_page_url { get; set; }
+        public string? primary_pdf_url { get; set; }
+        public string? primary_source_name { get; set; }
     }
 
     private sealed class OpenAlexMetaRow
@@ -122,6 +141,27 @@ public static class ParquetTextSource
         public int? PubYear { get; set; }
         public bool IsRetracted { get; set; }
     }
+
+    private sealed class JatsArticleMetaRow
+    {
+        public string? ArticleKey { get; set; }
+        public string? Pmcid { get; set; }
+        public string? Pmid { get; set; }
+        public string? Doi { get; set; }
+        public string? Journal { get; set; }
+        public string? IssnElectronic { get; set; }
+        public string? IssnPrint { get; set; }
+        public string? Publisher { get; set; }
+        public string? ArticleType { get; set; }
+        public int? PubYear { get; set; }
+        public int? PubMonth { get; set; }
+        public int? PubDay { get; set; }
+        public string? LicenseUrl { get; set; }
+        public string? Authors { get; set; }
+        public string? Keywords { get; set; }
+    }
+
+    private sealed record JatsArticleMetadata(string Pmid, BibliographicMetadata Metadata);
 
     public static IEnumerable<string> ExpandGlob(string glob)
     {
@@ -179,13 +219,20 @@ public static class ParquetTextSource
     }
 
     /// <summary>Title, body and metadata kept separate, for building the served index.</summary>
-    public static async IAsyncEnumerable<ArticleRecord> ReadArticlesAsync(string glob, CorpusSchema schema)
+    public static async IAsyncEnumerable<ArticleRecord> ReadArticlesAsync(
+        string glob,
+        CorpusSchema schema,
+        string? metadataGlob = null)
     {
         var files = ExpandGlob(glob).ToList();
         if (files.Count == 0)
         {
             throw new FileNotFoundException($"No Parquet files matched '{glob}'.");
         }
+
+        var jatsMetadata = schema == CorpusSchema.Chunks && !string.IsNullOrWhiteSpace(metadataGlob)
+            ? await ReadJatsMetadataAsync(metadataGlob)
+            : null;
 
         foreach (var path in files)
         {
@@ -204,7 +251,29 @@ public static class ParquetTextSource
                         row.publication_year ?? 0,
                         row.pmid ?? "",
                         Section: "",
-                        IsRetracted: false);
+                        IsRetracted: false,
+                        new BibliographicMetadata(
+                            row.publication_date ?? "",
+                            row.doi ?? "",
+                            Authors: "",
+                            Institutions: "",
+                            row.primary_source_name ?? "",
+                            Issn: "",
+                            row.language ?? "",
+                            row.work_type ?? "",
+                            (int)Math.Clamp(row.cited_by_count ?? 0, 0, int.MaxValue),
+                            Volume: "",
+                            Issue: "",
+                            FirstPage: "",
+                            LastPage: "",
+                            Topics: "",
+                            Keywords: "",
+                            row.pmcid ?? "",
+                            Publisher: "",
+                            row.best_oa_landing_page_url ?? row.primary_landing_page_url ?? "",
+                            row.best_oa_pdf_url ?? row.primary_pdf_url ?? "",
+                            row.best_oa_license ?? "",
+                            row.is_oa));
                 }
             }
             else if (schema == CorpusSchema.OpenAlex)
@@ -244,17 +313,74 @@ public static class ParquetTextSource
                 foreach (var row in (await ParquetSerializer.DeserializeAsync<ChunkMetaRow>(stream)).Data)
                 {
                     if (string.IsNullOrEmpty(row.ChunkId) || string.IsNullOrWhiteSpace(row.Text)) continue;
+                    var articleKey = row.ArticleKey ?? row.ChunkId!;
+                    JatsArticleMetadata? articleMetadata = null;
+                    jatsMetadata?.TryGetValue(articleKey, out articleMetadata);
                     yield return new ArticleRecord(
                         row.ChunkId!,
-                        row.ArticleKey ?? row.ChunkId!,
+                        articleKey,
                         row.Title ?? "",
                         row.Text!,
                         row.PubYear ?? 0,
-                        Pmid: "",
+                        articleMetadata?.Pmid ?? "",
                         row.SectionKind ?? "",
-                        row.IsRetracted);
+                        row.IsRetracted,
+                        articleMetadata?.Metadata);
                 }
             }
         }
+    }
+
+    private static async Task<Dictionary<string, JatsArticleMetadata>> ReadJatsMetadataAsync(string glob)
+    {
+        var files = ExpandGlob(glob).ToList();
+        if (files.Count == 0)
+        {
+            throw new FileNotFoundException($"No article metadata files matched '{glob}'.");
+        }
+
+        var result = new Dictionary<string, JatsArticleMetadata>(StringComparer.Ordinal);
+        foreach (var path in files)
+        {
+            await using var stream = File.OpenRead(path);
+            foreach (var row in (await ParquetSerializer.DeserializeAsync<JatsArticleMetaRow>(stream)).Data)
+            {
+                if (string.IsNullOrEmpty(row.ArticleKey)) continue;
+                result[row.ArticleKey] = new JatsArticleMetadata(
+                    row.Pmid ?? "",
+                    new BibliographicMetadata(
+                        PublicationDate(row.PubYear, row.PubMonth, row.PubDay),
+                        row.Doi ?? "",
+                        row.Authors ?? "",
+                        Institutions: "",
+                        row.Journal ?? "",
+                        row.IssnElectronic ?? row.IssnPrint ?? "",
+                        Language: "",
+                        row.ArticleType ?? "",
+                        CitedByCount: null,
+                        Volume: "",
+                        Issue: "",
+                        FirstPage: "",
+                        LastPage: "",
+                        Topics: "",
+                        row.Keywords ?? "",
+                        row.Pmcid ?? "",
+                        row.Publisher ?? "",
+                        LandingPageUrl: "",
+                        PdfUrl: "",
+                        row.LicenseUrl ?? ""));
+            }
+        }
+
+        Console.WriteLine($"article metadata: {result.Count:N0} records from {files.Count:N0} file(s)");
+        return result;
+    }
+
+    private static string PublicationDate(int? year, int? month, int? day)
+    {
+        if (year is null) return "";
+        if (month is null) return year.Value.ToString("D4");
+        if (day is null) return $"{year.Value:D4}-{month.Value:D2}";
+        return $"{year.Value:D4}-{month.Value:D2}-{day.Value:D2}";
     }
 }

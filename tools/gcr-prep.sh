@@ -291,8 +291,12 @@ step "Search indexes"
 # Both are BM25 over Lucene. Nothing here needs the GPU; the cross-encoder is only
 # used at query time.
 build_index() {
-    local name="$1" schema="$2" glob="$3"
+    local name="$1" schema="$2" glob="$3" metadata="${4:-}"
     local out="$INDEXES/$name"
+    local metadata_args=()
+    if [[ -n "$metadata" ]]; then
+        metadata_args=(--metadata "$metadata")
+    fi
 
     if [[ -f "$out/segments.gen" || -n "$(ls -A "$out" 2>/dev/null)" ]] && [[ $FORCE_INDEX -eq 0 ]]; then
         info "$(printf '%-22s' "$name") already built ($(du -sh "$out" 2>/dev/null | cut -f1))"
@@ -309,13 +313,14 @@ build_index() {
 
     info "$(printf '%-22s' "$name") building ..."
     ( cd "$REPO" && dotnet run --project src/SciencePcm.Lexical -c Release --no-build -- build \
-        --input "$glob" --schema "$schema" --out "$out" \
+        --input "$glob" "${metadata_args[@]}" --schema "$schema" --out "$out" \
         --threads "$(nproc)" --ram-buffer 2048 )
 }
 
 mkdir -p "$INDEXES"
 build_index "abstracts-bm25" "abstracts" "$CORPUS/abstracts/*.parquet"
-build_index "passages-bm25"  "chunks"    "$CORPUS/passages-2019-2025/chunks-part-*.parquet"
+build_index "passages-bm25"  "chunks"    "$CORPUS/passages-2019-2025/chunks-part-*.parquet" \
+    "$CORPUS/passages-2019-2025/articles-part-*.parquet"
 
 # ---------------------------------------------------------------- summary
 

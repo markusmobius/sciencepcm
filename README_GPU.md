@@ -250,8 +250,11 @@ archived in the blob store in case the full-text tier behaves differently.
 
 ### 1. Build the served index
 
-Distinct from the eval index: this one *stores* title, abstract, year and PMID, because
-the reranker needs the passage text at query time and `get_paper` returns it.
+Distinct from the eval index: these store text plus bibliographic metadata because the
+reranker needs the passage text at query time and MCP results must identify their source.
+The abstract Parquet already contains DOI, PMCID, publication date, journal, citations
+and open-access links. The passage build joins the existing JATS `articles-part` shards
+to `chunks-part` by article key; it does not rerun XML ingest.
 
 ```bash
 source ~/sciencepcm-data/env.sh
@@ -262,6 +265,23 @@ dotnet run --project src/SciencePcm.Lexical -c Release -- build \
   --schema abstracts \
   --out ~/sciencepcm-data/index/abstracts-bm25-v2 \
   --threads 16 --ram-buffer 2048
+```
+
+Build the enriched full-text passage index:
+
+```bash
+dotnet run --project src/SciencePcm.Lexical -c Release -- build \
+  --input "$HOME/sciencepcm-data/sciencepcm/passages-2019-2025/chunks-part-*.parquet" \
+  --metadata "$HOME/sciencepcm-data/sciencepcm/passages-2019-2025/articles-part-*.parquet" \
+  --schema chunks \
+  --out ~/sciencepcm-data/index/passages-bm25-v2 \
+  --threads 16 --ram-buffer 2048
+```
+
+Alternatively, the provisioning helper rebuilds both indexes with the correct metadata:
+
+```bash
+bash tools/gcr-prep.sh --force-index --skip-pull --skip-models
 ```
 
 ### 2. Export the cross-encoder
@@ -298,6 +318,7 @@ cd ~/sciencepcm
 
 dotnet run --project src/SciencePcm.Server -c Release -p:UseGpu=true -- \
   --index ~/sciencepcm-data/index/abstracts-bm25-v2 \
+  --passage-index ~/sciencepcm-data/index/passages-bm25-v2 \
   --cross-encoder ~/sciencepcm-data/models/medcpt-cross \
   --gpu \
   --urls http://0.0.0.0:8080
