@@ -13,7 +13,9 @@ public sealed class LiteratureTools(RetrievalService retrieval)
     [Description(
         "Search ABSTRACTS of neuroscience papers and return the most relevant papers. This is " +
         "the tier to use for breadth - which papers exist on a topic, what a field says. " +
-        "For specific findings, methods or numbers inside a paper, use search_full_text. " +
+        "DO NOT use abstracts to answer methods questions, sample sizes, parameters, procedures " +
+        "or specific findings: call search_full_text instead. On a methods benchmark, full-text " +
+        "search achieved 0.932 nDCG@10 and 89% useful results, versus 0.247 and 21% for abstracts. " +
         "Use a full natural-language question rather than keywords; the reranker reads the " +
         "question and the abstract together, so phrasing carries information. " +
         "Candidates are found lexically before being reranked, so a paper that uses different " +
@@ -55,11 +57,14 @@ public sealed class LiteratureTools(RetrievalService retrieval)
     [McpServerTool(Name = "search_full_text")]
     [Description(
         "Search the FULL TEXT of neuroscience papers and return matching passages, not whole " +
-        "papers. Use this for what a study actually did or found: methods, sample sizes, " +
-        "parameters, specific results. Each hit is a ~300 word fragment labelled with its " +
+        "papers. ALWAYS use this first for what a study actually did or found: methods, sample " +
+        "sizes, parameters, procedures and specific results. Full text substantially outperformed " +
+        "abstracts on methods questions (0.932 vs 0.247 nDCG@10; 89% vs 21% useful results). " +
+        "Each hit is a ~300 word fragment labelled with its " +
         "section, so it can be quoted and attributed. " +
         "IMPORTANT: full text covers only about 23% of the corpus, so absence here does not " +
-        "mean absence from the literature - fall back to search_literature for breadth. " +
+        "mean absence from the literature. Fall back to search_literature to identify papers, " +
+        "but do not present an abstract as evidence for methodological details it does not state. " +
         "Retracted papers ARE included and flagged is_retracted; say so if you cite one. " +
         "As with search_literature, candidates are found lexically, so re-query with the " +
         "terminology a paper would actually use rather than the phrasing of the question.")]
@@ -141,7 +146,7 @@ public sealed class LiteratureTools(RetrievalService retrieval)
     }
 
     [McpServerTool(Name = "get_paper")]
-    [Description("Retrieve one paper in full by its article key, as returned by search_literature.")]
+    [Description("Retrieve the complete abstract and metadata for one paper by its article key. This does not return full text.")]
     public string GetPaper(
         [Description("The article key, for example https://openalex.org/W2154021234")] string articleKey)
     {
@@ -173,14 +178,23 @@ public sealed class LiteratureTools(RetrievalService retrieval)
             {
                 documents = retrieval.DocumentCount,
                 use_for = "breadth - which papers exist on a topic",
+                not_for = "methods, sample sizes, parameters, procedures or specific findings",
             },
             full_text = retrieval.HasFullText
                 ? new
                 {
                     passages = retrieval.PassageCount,
-                    use_for = "depth - what a study did and found",
+                    use_for = "methods and depth - what a study did and found",
                     coverage = "about 23% of the corpus has full text",
                     sources = "PubMed Central, bioRxiv, medRxiv, 2019-2025",
+                    methods_benchmark = new
+                    {
+                        ndcg_at_10 = 0.9317,
+                        mean_grade = 2.603,
+                        useful_result_percent = 89.0,
+                        abstract_ndcg_at_10 = 0.2472,
+                        abstract_useful_result_percent = 20.7,
+                    },
                 }
                 : null,
             source = "OpenAlex, filtered to any topic in field 28 (neuroscience)",
