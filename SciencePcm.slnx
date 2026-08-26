@@ -1,5 +1,8 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/OpenAlex.Index/OpenAlex.Index.csproj" />
+    <Project Path="src/OpenAlex.Ingest/OpenAlex.Ingest.csproj" />
+    <Project Path="src/OpenAlex.Server/OpenAlex.Server.csproj" />
     <Project Path="src/SciencePcm.Core/SciencePcm.Core.csproj" />
     <Project Path="src/SciencePcm.Embed/SciencePcm.Embed.csproj" />
     <Project Path="src/SciencePcm.Index/SciencePcm.Index.csproj" />

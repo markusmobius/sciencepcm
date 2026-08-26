@@ -252,15 +252,25 @@ def main() -> int:
     parser.add_argument("--opset", type=int, default=17)
     parser.add_argument("--article-only", action="store_true", help="Skip the query and cross encoders.")
     parser.add_argument("--cross-only", action="store_true", help="Export only the cross-encoder.")
+    parser.add_argument(
+        "--cross-model",
+        default=CROSS_MODEL,
+        help="HuggingFace sequence-classification model used for cross-encoder export.",
+    )
+    parser.add_argument(
+        "--cross-name",
+        default="medcpt-cross",
+        help="Output directory name for the cross-encoder.",
+    )
     args = parser.parse_args()
 
     if args.cross_only:
-        targets = [(CROSS_MODEL, args.out / "medcpt-cross", "cross")]
+        targets = [(args.cross_model, args.out / args.cross_name, "cross")]
     else:
         targets = [(ARTICLE_MODEL, args.out / "medcpt-article", "encoder")]
         if not args.article_only:
             targets.append((QUERY_MODEL, args.out / "medcpt-query", "encoder"))
-            targets.append((CROSS_MODEL, args.out / "medcpt-cross", "cross"))
+            targets.append((args.cross_model, args.out / args.cross_name, "cross"))
 
     for model_id, destination, kind in targets:
         export(model_id, destination, args.max_tokens, args.opset, kind)
