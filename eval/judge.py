@@ -38,13 +38,13 @@ GRADE_SCHEMA = {
 }
 
 SYSTEM_PROMPT = (
-    "You are a neuroscience researcher assessing whether a paper is a useful answer to a "
-    "colleague's question. Judge only the title and abstract shown. Grade on this scale:\n"
+    "You are a neuroscience researcher assessing whether a {unit} is a useful answer to a "
+    "colleague's question. Judge only the text shown. Grade on this scale:\n"
     "3 = directly answers the question, or reports the specific finding asked about\n"
     "2 = clearly relevant, covers the topic and would inform an answer\n"
     "1 = marginally related, shares subject matter but does not address the question\n"
     "0 = not relevant\n"
-    "Judge relevance to the question asked, not the paper's quality or recency. "
+    "Judge relevance to the question asked, not the quality or recency of the work. "
     "A broad review can be a 3 if the question asks what something is."
 )
 
@@ -63,7 +63,7 @@ def ndcg_at_k(ranked_grades: list[int], pooled_grades: list[int], k: int) -> flo
     return dcg(ranked_grades[:k]) / ideal if ideal > 0 else 0.0
 
 
-async def judge_pairs(pairs, texts, questions, model, workers):
+async def judge_pairs(pairs, texts, questions, model, workers, unit):
     """Grade every pair, returning {"query_id|key": grade}."""
     from LlmClient.LlmLib import LlmFactory
     from LlmClient.Models import Chat
@@ -91,10 +91,10 @@ async def judge_pairs(pairs, texts, questions, model, workers):
                     return
 
                 chat = Chat(responseSchema=GRADE_SCHEMA, model=model)
-                chat.AddSystemMessage(SYSTEM_PROMPT)
+                chat.AddSystemMessage(SYSTEM_PROMPT.format(unit=unit))
                 chat.AddUserMessage(
                     f"Question: {questions[query_id]}\n\n"
-                    f"Paper:\n{texts[key]}\n\n"
+                    f"{unit.capitalize()}:\n{texts[key]}\n\n"
                     "Return the relevance grade as JSON."
                 )
 
@@ -129,6 +129,12 @@ def main() -> int:
     parser.add_argument("--id-field", default="query_id")
     parser.add_argument("--text-field", default="query_text")
     parser.add_argument("--articles", required=True, help="Glob for the abstracts Parquet")
+    parser.add_argument(
+        "--unit",
+        default="paper",
+        choices=["paper", "passage"],
+        help="What a hit is. Use passage when judging search_full_text.",
+    )
     parser.add_argument("--top", type=int, default=10, help="Depth to judge and score.")
     parser.add_argument("--sample", type=int, default=150, help="Queries to judge.")
     parser.add_argument("--workers", type=int, default=32, help="The server runs 50 threads.")
@@ -146,6 +152,16 @@ def main() -> int:
         parser.error("--label must be given as often as --run")
 
     runs = [{str(r["query_id"]): r["hits"] for r in load_jsonl(path)} for path in args.run]
+
+    # Runs from the live server carry the text they returned. Prefer it: a passage id
+    # cannot be looked up in the abstracts Parquet, and even for abstracts it is the
+    # text the system actually showed.
+    texts: dict[str, str] = {}
+    for path in args.run:
+        for record in load_jsonl(path):
+            for key, text in zip(record.get("hits", []), record.get("texts", [])):
+                if text and key not in texts:
+                    texts[key] = text
     questions = {
         str(r[args.id_field]): r[args.text_field]
         for r in load_jsonl(args.queries)
@@ -167,20 +183,26 @@ def main() -> int:
         pooled[query_id] = seen
 
     wanted = sorted({key for keys in pooled.values() for key in keys})
-    rows = duckdb.connect().execute(
-        f"""
-        SELECT openalex_id, COALESCE(title, ''), COALESCE(abstract, '')
-        FROM read_parquet('{args.articles}')
-        WHERE openalex_id IN (SELECT UNNEST(?))
-        """,
-        [wanted],
-    ).fetchall()
-    texts = {row[0]: f"{row[1]}\n\n{row[2][:2000]}" for row in rows}
-    print(f"documents pooled: {len(wanted):,}, text found for {len(texts):,}")
+    missing = [key for key in wanted if key not in texts]
+
+    if missing:
+        rows = duckdb.connect().execute(
+            f"""
+            SELECT openalex_id, COALESCE(title, ''), COALESCE(abstract, '')
+            FROM read_parquet('{args.articles}')
+            WHERE openalex_id IN (SELECT UNNEST(?))
+            """,
+            [missing],
+        ).fetchall()
+        for row in rows:
+            texts[row[0]] = f"{row[1]}\n\n{row[2][:2000]}"
+
+    found = sum(1 for key in wanted if key in texts)
+    print(f"documents pooled: {len(wanted):,}, text found for {found:,}")
 
     pairs = [(qid, key) for qid, keys in pooled.items() for key in keys if key in texts]
 
-    grades = asyncio.run(judge_pairs(pairs, texts, questions, args.model, args.workers))
+    grades = asyncio.run(judge_pairs(pairs, texts, questions, args.model, args.workers, args.unit))
 
     results = {}
     print()

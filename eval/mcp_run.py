@@ -97,6 +97,12 @@ def main() -> int:
     parser.add_argument("--queries", required=True, type=Path)
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--tool", default="search_literature")
+    parser.add_argument(
+        "--id-field",
+        default="article_key",
+        help="What identifies a hit. Use passage_id for search_full_text, so that two "
+        "passages from one paper stay distinct.",
+    )
     parser.add_argument("--k", type=int, default=10)
     parser.add_argument("--section", default=None, help="Full-text only.")
     parser.add_argument("--fast", action="store_true", help="Ask the server to skip reranking.")
@@ -134,12 +140,19 @@ def main() -> int:
         payload = local.session.call_tool(args.tool, arguments)
         elapsed = (time.perf_counter() - started) * 1000
 
-        hits = [hit["article_key"] for hit in payload.get("results", [])]
-        scores = [hit.get("score", 0.0) for hit in payload.get("results", [])]
+        hits = []
+        scores = []
+        texts = []
+        for hit in payload.get("results", []):
+            hits.append(hit.get(args.id_field) or hit.get("article_key", ""))
+            scores.append(hit.get("score", 0.0))
+            # Carried along so the judge can grade what the server actually returned,
+            # rather than looking the document up again and grading something else.
+            texts.append(hit.get("text") or hit.get("abstract_excerpt") or "")
 
         with lock:
             done += 1
-            results[str(record["query_id"])] = {"hits": hits, "scores": scores}
+            results[str(record["query_id"])] = {"hits": hits, "scores": scores, "texts": texts}
             latencies.append(elapsed)
             if done % 25 == 0:
                 print(f"  {done:,}/{len(queries):,}  ({elapsed:,.0f} ms)")
@@ -151,7 +164,7 @@ def main() -> int:
     with args.out.open("w", encoding="utf-8") as stream:
         for record in queries:
             query_id = str(record["query_id"])
-            entry = results.get(query_id, {"hits": [], "scores": []})
+            entry = results.get(query_id, {"hits": [], "scores": [], "texts": []})
             stream.write(json.dumps({"query_id": query_id, **entry}) + "\n")
 
     latencies.sort()
