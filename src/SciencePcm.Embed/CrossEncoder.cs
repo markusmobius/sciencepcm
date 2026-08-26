@@ -19,6 +19,9 @@ public sealed record CrossEncoderOptions(
 public interface ICrossEncoder : IDisposable
 {
     float[] Score(string query, IReadOnlyList<string> passages);
+
+    /// <summary>Exposed so the hand-assembled pair layout can be checked against the exporter.</summary>
+    (int[] Ids, int[] TypeIds) EncodePair(string query, string passage);
 }
 
 /// <summary>
@@ -150,40 +153,7 @@ public sealed class CrossEncoder : ICrossEncoder
     /// so a divergence here would silently degrade every reranked result.
     /// </summary>
     public static (int Passed, int Total, List<string> Failures) VerifyParity(string parityPath, CrossEncoder encoder)
-    {
-        using var document = JsonDocument.Parse(File.ReadAllText(parityPath));
-        var samples = document.RootElement.GetProperty("samples");
-
-        var failures = new List<string>();
-        var passed = 0;
-        var total = 0;
-
-        foreach (var sample in samples.EnumerateArray())
-        {
-            total++;
-            var query = sample.GetProperty("query").GetString() ?? "";
-            var passage = sample.GetProperty("passage").GetString() ?? "";
-            var expectedIds = sample.GetProperty("ids").EnumerateArray().Select(e => e.GetInt32()).ToArray();
-            var expectedTypes = sample.GetProperty("token_type_ids").EnumerateArray().Select(e => e.GetInt32()).ToArray();
-
-            var (ids, typeIds) = encoder.EncodePair(query, passage);
-
-            if (ids.SequenceEqual(expectedIds) && typeIds.SequenceEqual(expectedTypes))
-            {
-                passed++;
-                continue;
-            }
-
-            failures.Add(
-                $"\"{query}\" + \"{passage[..Math.Min(40, passage.Length)]}...\"\n" +
-                $"    expected ids   : {string.Join(",", expectedIds)}\n" +
-                $"    actual ids     : {string.Join(",", ids)}\n" +
-                $"    expected types : {string.Join(",", expectedTypes)}\n" +
-                $"    actual types   : {string.Join(",", typeIds)}");
-        }
-
-        return (passed, total, failures);
-    }
+        => CrossEncoderParity.Verify(parityPath, encoder);
 
     public void Dispose()
     {

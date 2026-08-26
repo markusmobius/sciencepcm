@@ -88,7 +88,7 @@ public sealed class SentencePieceCrossEncoder : ICrossEncoder
         return [.. trimmed];
     }
 
-    public int[] EncodePair(string query, string passage)
+    public (int[] Ids, int[] TypeIds) EncodePair(string query, string passage)
     {
         var q = Tokenize(query);
         var p = Tokenize(passage);
@@ -110,7 +110,8 @@ public sealed class SentencePieceCrossEncoder : ICrossEncoder
         foreach (var id in p) ids[cursor++] = id;
         ids[cursor++] = _special.Eos;
 
-        return ids;
+        // XLM-R carries no segment ids; the caller expects the tuple shape regardless.
+        return (ids, new int[ids.Length]);
     }
 
     public float[] Score(string query, IReadOnlyList<string> passages)
@@ -121,7 +122,7 @@ public sealed class SentencePieceCrossEncoder : ICrossEncoder
         var longest = 0;
         for (var i = 0; i < passages.Count; i++)
         {
-            encoded[i] = EncodePair(query, passages[i]);
+            encoded[i] = EncodePair(query, passages[i]).Ids;
             longest = Math.Max(longest, encoded[i].Length);
         }
 

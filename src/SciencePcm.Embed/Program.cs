@@ -27,9 +27,37 @@ internal static class Program
 
         return options.Benchmark
             ? await BenchmarkAsync(options)
-            : options.VerifyTokenizer is not null
-                ? VerifyTokenizer(options)
-                : await EmbedAsync(options);
+            : options.VerifyPairs is not null
+                ? VerifyPairs(options)
+                : options.VerifyTokenizer is not null
+                    ? VerifyTokenizer(options)
+                    : await EmbedAsync(options);
+    }
+
+    /// <summary>
+    /// Checks the hand-assembled cross-encoder pair layout against what HuggingFace
+    /// produced at export time. Wrong separators or segment ids do not throw - they just
+    /// quietly make every reranked score worse.
+    /// </summary>
+    private static int VerifyPairs(Options options)
+    {
+        Console.WriteLine($"model     : {options.ModelDirectory}");
+        Console.WriteLine($"tokenizer : {CrossEncoderFactory.Describe(options.ModelDirectory)}");
+        Console.WriteLine();
+
+        using var encoder = CrossEncoderFactory.Create(
+            new CrossEncoderOptions(options.ModelDirectory, options.IntraOpThreads, options.MaxTokens));
+
+        var (passed, total, failures) = CrossEncoderParity.Verify(options.VerifyPairs!, encoder);
+
+        foreach (var failure in failures)
+        {
+            Console.WriteLine($"  FAIL  {failure}");
+            Console.WriteLine();
+        }
+
+        Console.WriteLine($"{passed}/{total} pair probes match.");
+        return failures.Count == 0 ? 0 : 1;
     }
 
     /// <summary>
@@ -551,6 +579,9 @@ internal sealed class Options
           --verify-tokenizer <tokenizer-parity.json>
                                  Compare C# tokenisation against the Python export.
                                  Run this before any full index build.
+          --verify-pairs <tokenizer-parity.json>
+                                 Same, for cross-encoder query/passage pairs. The pair
+                                 layout is assembled in C#, so check it before serving.
         """;
 
     public string ModelDirectory { get; private set; } = "";
@@ -579,6 +610,7 @@ internal sealed class Options
     public double GpuMemLimitGb { get; private set; }
     public int BenchmarkTexts { get; private set; } = 5_000;
     public string? VerifyTokenizer { get; private set; }
+    public string? VerifyPairs { get; private set; }
 
     public static Options Parse(string[] args)
     {
@@ -642,12 +674,14 @@ internal sealed class Options
                 case "--gpu-mem-limit": options.GpuMemLimitGb = double.Parse(Next()); break;
                 case "--benchmark-texts": options.BenchmarkTexts = int.Parse(Next()); break;
                 case "--verify-tokenizer": options.VerifyTokenizer = Next(); break;
+                case "--verify-pairs": options.VerifyPairs = Next(); break;
                 default: throw new ArgumentException($"Unrecognised argument '{flag}'.");
             }
         }
 
         if (string.IsNullOrWhiteSpace(options.ModelDirectory)) throw new ArgumentException("--model is required.");
         if (options.VerifyTokenizer is not null) return options;
+        if (options.VerifyPairs is not null) return options;
         if (string.IsNullOrWhiteSpace(options.Input)) throw new ArgumentException("--input is required.");
         if (!options.Benchmark && string.IsNullOrWhiteSpace(options.OutputDirectory))
         {
