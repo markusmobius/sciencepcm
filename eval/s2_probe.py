@@ -42,6 +42,7 @@ from pathlib import Path
 import requests
 
 BATCH_URL = "https://api.semanticscholar.org/graph/v1/paper/batch"
+OPENALEX_URL = "https://api.openalex.org/works"
 FIELDS = "externalIds,title,year,abstract,isOpenAccess,openAccessPdf"
 
 # The batch endpoint caps a request at 500 ids.
@@ -99,6 +100,45 @@ def sample_from_parquet(glob: str, sample: int, control: bool, where: str | None
 
         print(f"sampled {len(rows):,} from cohort '{cohort}'", file=sys.stderr)
 
+    return records
+
+
+def sample_from_openalex_api(filter_expr: str, sample: int, mailto: str | None) -> list[dict]:
+    """Pull a cohort straight from the OpenAlex API, so the missing-abstract question can
+    be answered without waiting for a local digest that contains such works."""
+    records: list[dict] = []
+    cursor = "*"
+
+    while len(records) < sample and cursor:
+        params = {
+            "filter": filter_expr,
+            "per-page": min(200, sample - len(records)),
+            "cursor": cursor,
+            "select": "id,title,doi,publication_year,type,cited_by_count",
+        }
+        if mailto:
+            params["mailto"] = mailto
+
+        payload = requests.get(OPENALEX_URL, params=params, timeout=60)
+        payload.raise_for_status()
+        body = payload.json()
+
+        for work in body.get("results", []):
+            records.append({
+                "cohort": "openalex-api",
+                "openalex_id": work.get("id"),
+                "title": work.get("title"),
+                "doi": normalise_doi(work.get("doi")),
+                "year": work.get("publication_year"),
+                "type": work.get("type"),
+                "cited_by_count": work.get("cited_by_count"),
+            })
+
+        cursor = body.get("meta", {}).get("next_cursor")
+        if not body.get("results"):
+            break
+
+    print(f"sampled {len(records):,} from OpenAlex filter '{filter_expr}'", file=sys.stderr)
     return records
 
 
@@ -222,6 +262,11 @@ def main() -> int:
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--parquet", help="Glob over the OpenAlex v3 digest to sample from.")
     source.add_argument("--dois", type=Path, help="File of DOIs, one per line.")
+    source.add_argument("--openalex-filter",
+                        help="OpenAlex API filter defining the cohort, e.g. "
+                             "'has_abstract:false,type:article,cited_by_count:>50'. Needs no local "
+                             "digest, so the missing-abstract cohort can be measured immediately.")
+    parser.add_argument("--mailto", help="Contact address for OpenAlex's polite pool.")
     parser.add_argument("--sample", type=int, default=500, help="Records per cohort. Default 500.")
     parser.add_argument("--control", action="store_true",
                         help="Also sample works that DO have an OpenAlex abstract, to validate the join.")
@@ -237,8 +282,12 @@ def main() -> int:
     if not args.api_key:
         print("no S2 API key: the shared rate limit is low, keep --sample small", file=sys.stderr)
 
-    records = (load_doi_file(args.dois) if args.dois
-               else sample_from_parquet(args.parquet, args.sample, args.control, args.where))
+    if args.dois:
+        records = load_doi_file(args.dois)
+    elif args.openalex_filter:
+        records = sample_from_openalex_api(args.openalex_filter, args.sample, args.mailto)
+    else:
+        records = sample_from_parquet(args.parquet, args.sample, args.control, args.where)
     if not records:
         print("nothing to probe", file=sys.stderr)
         return 1
