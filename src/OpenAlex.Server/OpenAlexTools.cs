@@ -19,14 +19,14 @@ public sealed class OpenAlexTools(RetrievalService retrieval)
         "when recall matters. Only works for which OpenAlex supplies an abstract are included.")]
     public string SearchOpenAlex(
         [Description("A question, news passage, claim, title fragment, author, institution, journal or identifier.")] string query,
-        [Description("How many works to return. Default 10, maximum 50.")] int k = 10,
+        [Description("How many works to return. Default 10, maximum 50.")] int limit = 10,
         [Description("Only include works published in or after this year.")] int? yearMin = null,
         [Description("Only include works published in or before this year.")] int? yearMax = null,
         [Description("Skip cross-encoder reranking. Faster but less relevant.")] bool fast = false)
     {
         if (string.IsNullOrWhiteSpace(query)) return "{\"error\": \"query must not be empty\"}";
 
-        var results = retrieval.Search(query, Math.Clamp(k, 1, 50), yearMin, yearMax, rerank: !fast);
+        var results = retrieval.Search(query, Math.Clamp(limit, 1, 50), yearMin, yearMax, rerank: !fast);
         return JsonSerializer.Serialize(new
         {
             query,

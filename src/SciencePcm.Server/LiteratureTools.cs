@@ -27,7 +27,7 @@ public sealed class LiteratureTools(RetrievalService retrieval)
         "'genetics'), CALL THIS AGAIN with the alternative terms and merge what you get.")]
     public string SearchLiterature(
         [Description("The research question, in natural language.")] string query,
-        [Description("How many papers to return. Default 10, maximum 50.")] int k = 10,
+        [Description("How many papers to return. Default 10, maximum 50.")] int limit = 10,
         [Description("Only include papers published in or after this year.")] int? yearMin = null,
         [Description("Only include papers published in or before this year.")] int? yearMax = null,
         [Description("Skip reranking. Faster, noticeably less relevant. Default false.")] bool fast = false)
@@ -37,7 +37,7 @@ public sealed class LiteratureTools(RetrievalService retrieval)
             return "{\"error\": \"query must not be empty\"}";
         }
 
-        var results = retrieval.Search(query, Math.Clamp(k, 1, 50), yearMin, yearMax, rerank: !fast);
+        var results = retrieval.Search(query, Math.Clamp(limit, 1, 50), yearMin, yearMax, rerank: !fast);
 
         return JsonSerializer.Serialize(new
         {
@@ -81,7 +81,7 @@ public sealed class LiteratureTools(RetrievalService retrieval)
         "terminology a paper would actually use rather than the phrasing of the question.")]
     public string SearchFullText(
         [Description("The research question, in natural language.")] string query,
-        [Description("How many passages to return. Default 10, maximum 50.")] int k = 10,
+        [Description("How many passages to return. Default 10, maximum 50.")] int limit = 10,
         [Description("Restrict to one section: Methods, Results, Discussion, Introduction, Abstract, FigureCaption, TableCaption.")] string? section = null,
         [Description("Only include papers published in or after this year.")] int? yearMin = null,
         [Description("Only include papers published in or before this year.")] int? yearMax = null,
@@ -102,7 +102,7 @@ public sealed class LiteratureTools(RetrievalService retrieval)
         }
 
         var results = retrieval.SearchFullText(
-            query, Math.Clamp(k, 1, 50), section, yearMin, yearMax, includeRetracted, maxPerArticle);
+            query, Math.Clamp(limit, 1, 50), section, yearMin, yearMax, includeRetracted, maxPerArticle);
 
         return JsonSerializer.Serialize(new
         {

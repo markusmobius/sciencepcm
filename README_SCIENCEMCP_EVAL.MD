@@ -277,7 +277,7 @@ do not retain only an aggregate score.
   "model": "provider/model-version",
   "answer": "...",
   "tool_calls": [
-    {"name": "search_full_text", "arguments": {"query": "...", "k": 10}}
+    {"name": "search_full_text", "arguments": {"query": "...", "limit": 10}}
   ],
   "citations": ["PMID:12345678", "10.1000/example"],
   "latency_ms": 8420,

@@ -163,7 +163,7 @@ def main() -> int:
         if not hasattr(local, "session"):
             local.session = McpSession(args.endpoint, token, args.timeout)
 
-        arguments = {"query": record["query_text"], "k": args.k}
+        arguments = {"query": record["query_text"], "limit": args.k}
         if args.section:
             arguments["section"] = args.section
         if args.fast:
