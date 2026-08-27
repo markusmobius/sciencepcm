@@ -70,11 +70,16 @@ def sample_from_parquet(glob: str, sample: int, control: bool, where: str | None
     for cohort, predicate in cohorts:
         if where:
             predicate = f"{predicate} AND ({where})"
-        rows = connection.execute(
+
+        # The filter has to sit in a subquery: DuckDB applies USING SAMPLE before WHERE,
+        # so the obvious phrasing samples the whole corpus and then filters the sample
+        # down to a handful of rows.        rows = connection.execute(
             f"""
-            SELECT openalex_id, title, doi, publication_year, type, cited_by_count
-            FROM read_parquet(?)
-            WHERE {predicate}
+            SELECT * FROM (
+                SELECT openalex_id, title, doi, publication_year, type, cited_by_count
+                FROM read_parquet(?)
+                WHERE {predicate}
+            )
             USING SAMPLE {int(sample)} ROWS
             """,
             [os.path.expanduser(glob)],
