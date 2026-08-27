@@ -58,7 +58,7 @@ def normalise_doi(raw: str | None) -> str | None:
     return doi if doi.startswith("10.") else None
 
 
-def sample_from_parquet(glob: str, sample: int, control: bool) -> list[dict]:
+def sample_from_parquet(glob: str, sample: int, control: bool, where: str | None) -> list[dict]:
     import duckdb
 
     connection = duckdb.connect()
@@ -68,6 +68,8 @@ def sample_from_parquet(glob: str, sample: int, control: bool) -> list[dict]:
 
     records: list[dict] = []
     for cohort, predicate in cohorts:
+        if where:
+            predicate = f"{predicate} AND ({where})"
         rows = connection.execute(
             f"""
             SELECT openalex_id, title, doi, publication_year, type, cited_by_count
@@ -211,6 +213,10 @@ def main() -> int:
     parser.add_argument("--sample", type=int, default=500, help="Records per cohort. Default 500.")
     parser.add_argument("--control", action="store_true",
                         help="Also sample works that DO have an OpenAlex abstract, to validate the join.")
+    parser.add_argument("--where", help="Extra SQL predicate on the sample, e.g. "
+                                        "\"type = 'article' AND cited_by_count >= 50\". A random draw "
+                                        "from all of OpenAlex is mostly long tail that S2 never indexed, "
+                                        "which is not the population a news-matching service serves.")
     parser.add_argument("--api-key", default=os.environ.get("SEMANTIC_S3") or os.environ.get("S2_API_KEY"))
     parser.add_argument("--sleep", type=float, default=1.0, help="Seconds between batches. Default 1.")
     parser.add_argument("--out", type=Path, default=Path("runs/s2-probe.jsonl"))
@@ -220,7 +226,7 @@ def main() -> int:
         print("no S2 API key: the shared rate limit is low, keep --sample small", file=sys.stderr)
 
     records = (load_doi_file(args.dois) if args.dois
-               else sample_from_parquet(args.parquet, args.sample, args.control))
+               else sample_from_parquet(args.parquet, args.sample, args.control, args.where))
     if not records:
         print("nothing to probe", file=sys.stderr)
         return 1
