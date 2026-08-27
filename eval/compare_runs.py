@@ -29,7 +29,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--run", action="append", required=True, type=Path, help="Repeat per system.")
     parser.add_argument("--label", action="append", default=None, help="Optional name per --run.")
-    parser.add_argument("--qrels", required=True, type=Path)
+    parser.add_argument("--qrels", required=True, type=Path, help="Supplies query_text; gold is optional.")
     parser.add_argument("--articles", required=True, help="Glob for the abstracts Parquet")
     parser.add_argument("--queries", type=int, default=5, help="How many queries to show.")
     parser.add_argument("--top", type=int, default=10, help="Hits per system.")
@@ -45,6 +45,15 @@ def main() -> int:
     runs = [{str(r["query_id"]): r["hits"] for r in load_jsonl(path)} for path in args.run]
     qrels = {str(r["query_id"]): r for r in load_jsonl(args.qrels)}
 
+    # Runs from the live server carry the text they returned; prefer it, since a passage
+    # id or a non-neuroscience work cannot be looked up in the abstracts Parquet.
+    run_texts: dict[str, str] = {}
+    for path in args.run:
+        for record in load_jsonl(path):
+            for key, text in zip(record.get("hits", []), record.get("texts", [])):
+                if text and key not in run_texts:
+                    run_texts[key] = text
+
     if args.query_id:
         chosen = [q for q in args.query_id if q in qrels]
     else:
@@ -53,39 +62,51 @@ def main() -> int:
         chosen = random.sample(shared, min(args.queries, len(shared)))
 
     wanted = sorted({key for qid in chosen for run in runs for key in run.get(qid, [])[: args.top]})
-    rows = duckdb.connect().execute(
-        f"""
-        SELECT openalex_id, COALESCE(title, ''), COALESCE(publication_year, 0)
-        FROM read_parquet('{args.articles}')
-        WHERE openalex_id IN (SELECT UNNEST(?))
-        """,
-        [wanted],
-    ).fetchall()
-    meta = {row[0]: (row[1], row[2]) for row in rows}
+    missing = [key for key in wanted if key not in run_texts]
+    meta = {}
+
+    if missing:
+        rows = duckdb.connect().execute(
+            f"""
+            SELECT openalex_id, COALESCE(title, ''), COALESCE(publication_year, 0)
+            FROM read_parquet('{args.articles}')
+            WHERE openalex_id IN (SELECT UNNEST(?))
+            """,
+            [missing],
+        ).fetchall()
+        meta = {row[0]: (row[1], row[2]) for row in rows}
+
+    def describe(key: str) -> str:
+        if key in run_texts:
+            # The composed text starts with the title, then a metadata line.
+            return " | ".join(run_texts[key].split("\n")[:2])
+        title, year = meta.get(key, ("<not found>", 0))
+        return f"{title} ({year})"
 
     for query_id in chosen:
         record = qrels[query_id]
-        gold = set(record["gold_article_keys"])
+        gold = set(record.get("gold_article_keys") or [])
 
         print("=" * args.width)
         print(textwrap.fill(f"[{query_id}] {record['query_text']}", args.width))
-        print(f"gold in corpus: {len(gold)}")
+        if gold:
+            print(f"gold in corpus: {len(gold)}")
         print("=" * args.width)
 
         for label, run in zip(labels, runs):
             hits = run.get(query_id, [])[: args.top]
             found = sum(1 for key in hits if key in gold)
-            print(f"\n--- {label}  ({found}/{len(hits)} judged relevant) ---")
+            suffix = f"  ({found}/{len(hits)} judged relevant)" if gold else ""
+            print(f"\n--- {label}{suffix} ---")
 
             for rank, key in enumerate(hits, start=1):
-                title, year = meta.get(key, ("<title not found>", 0))
                 mark = "*" if key in gold else " "
-                line = f"{mark}{rank:>3}. ({year}) {title}"
+                line = f"{mark}{rank:>3}. {describe(key)}"
                 print(textwrap.shorten(line, width=args.width, placeholder=" ..."))
 
         print()
 
-    print("* = in the BioASQ gold set. Unmarked hits are unjudged, NOT necessarily wrong.")
+    print("* = in the gold set, where one exists. Unmarked hits are unjudged.")
     return 0
 
 
