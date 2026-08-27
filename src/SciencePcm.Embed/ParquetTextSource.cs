@@ -280,12 +280,16 @@ public static class ParquetTextSource
             {
                 foreach (var row in (await ParquetSerializer.DeserializeAsync<OpenAlexMetaRow>(stream)).Data)
                 {
-                    if (string.IsNullOrEmpty(row.openalex_id) || string.IsNullOrWhiteSpace(row.@abstract)) continue;
+                    // A work with no abstract is still findable by title, authors, journal
+                    // and institutions, which is how a paper named in a news article is
+                    // usually described. Only a work with neither is unusable.
+                    if (string.IsNullOrEmpty(row.openalex_id)) continue;
+                    if (string.IsNullOrWhiteSpace(row.@abstract) && string.IsNullOrWhiteSpace(row.title)) continue;
                     yield return new ArticleRecord(
                         row.openalex_id,
                         row.openalex_id,
                         row.title ?? "",
-                        row.@abstract!,
+                        row.@abstract ?? "",
                         row.publication_year ?? 0,
                         row.pmid ?? "",
                         Section: "",

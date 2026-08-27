@@ -15,6 +15,20 @@ public sealed record ServerOptions
     public int Threads { get; init; } = 8;
     public bool ParallelSearch { get; init; } = true;
     public double MaxDocFreqRatio { get; init; }
+
+    /// <summary>
+    /// Work types dropped before ranking. OpenAlex records peer reviews, datasets and
+    /// front matter as works in their own right, titled after the paper they discuss, so
+    /// they crowd out the paper itself when the paper has no abstract of its own.
+    /// </summary>
+    public IReadOnlyCollection<string> ExcludeWorkTypes { get; init; } = [];
+
+    /// <summary>
+    /// Weight on log10(1 + citations), added to the rerank score. A news article names
+    /// papers people talk about, so citations break ties between a landmark paper and the
+    /// commentaries that share its title. 0 disables the prior.
+    /// </summary>
+    public double CitationPriorWeight { get; init; }
     public bool UseGpu { get; init; }
     public long GpuMemoryLimitBytes { get; init; }
 }
@@ -91,7 +105,8 @@ public sealed class RetrievalService : IDisposable
             query,
             rerank ? Math.Max(k, _options.RerankCandidates) : k,
             yearMin,
-            yearMax);
+            yearMax,
+            _options.ExcludeWorkTypes);
 
         if (candidates.Count == 0) return [];
 
@@ -103,10 +118,22 @@ public sealed class RetrievalService : IDisposable
         var scores = Rerank(query, candidates);
 
         var reranked = candidates
-            .Select((hit, index) => ToResult(hit, scores[index], "bm25+rerank"))
+            .Select((hit, index) => ToResult(hit, (float)(scores[index] + CitationPrior(hit)), "bm25+rerank"))
             .OrderByDescending(r => r.Score);
 
         return Deduplicate(reranked).Take(k).ToList();
+    }
+
+    /// <summary>
+    /// Citation counts are missing or wrong on duplicate records, so this only ever adds -
+    /// a paper with no recorded citations keeps its rerank score rather than being pushed
+    /// down.
+    /// </summary>
+    private double CitationPrior(LexicalHit hit)
+    {
+        if (_options.CitationPriorWeight <= 0) return 0;
+        var citations = hit.Metadata?.CitedByCount ?? 0;
+        return citations <= 0 ? 0 : _options.CitationPriorWeight * Math.Log10(1 + citations);
     }
 
     public SearchResult? GetPaper(string articleKey)

@@ -8,7 +8,7 @@ SYNC_PYTHON="${SCIENCEPCM_DATA_ROOT:-$HOME/sciencepcm-data}/venvs/sync/bin/pytho
 LAB_PYTHON="${SCIENCEPCM_DATA_ROOT:-$HOME/sciencepcm-data}/venvs/lab/bin/python"
 ABSTRACTS="$DATA_ROOT/abstracts"
 INDEX="$DATA_ROOT/index/abstracts-bm25"
-MODEL="$DATA_ROOT/models/openalex-cross"
+MODEL="$DATA_ROOT/models/openalex-bge"
 PULL_ROOT="$DATA_ROOT/.abstracts-pull"
 INDEX_COMPLETE="$INDEX/.openalex-index-complete"
 COMMAND="${1:-prepare}"
@@ -67,12 +67,14 @@ prepare() {
         echo "OpenAlex abstract digest already present"
     fi
 
-    if [[ ! -f "$MODEL/model.onnx" ]]; then
+    if [[ ! -f "$MODEL/model.onnx" || ! -f "$MODEL/tokenizer.onnx" ]]; then
+        # bge-reranker-v2-m3 beats ms-marco-MiniLM-L-6-v2 on news-to-paper matching by a
+        # wide margin (hit@1 40.0% vs 23.3% over 30 known-item queries) and, being XLM-R
+        # based, it is multilingual like the corpus. It costs about 475 ms per query.
         "$LAB_PYTHON" "$REPO/tools/export_onnx.py" \
             --out "$DATA_ROOT/models" \
-            --cross-only \
-            --cross-model cross-encoder/ms-marco-MiniLM-L-6-v2 \
-            --cross-name openalex-cross
+            --reranker BAAI/bge-reranker-v2-m3 \
+            --reranker-name openalex-bge
     else
         echo "OpenAlex reranker already present"
     fi
@@ -97,7 +99,7 @@ prepare() {
 serve() {
     has_abstracts || { echo "run prepare first" >&2; exit 1; }
     has_index || { echo "run prepare first" >&2; exit 1; }
-    [[ -f "$MODEL/model.onnx" ]] || { echo "run prepare first" >&2; exit 1; }
+    [[ -f "$MODEL/model.onnx" && -f "$MODEL/tokenizer.onnx" ]] || { echo "run prepare first" >&2; exit 1; }
     exec dotnet run --project "$REPO/src/OpenAlex.Server" -c Release \
         -p:UseGpu=true --no-build -- \
         --index "$INDEX" \

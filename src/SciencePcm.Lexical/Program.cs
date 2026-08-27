@@ -90,7 +90,9 @@ public static class Program
 
         await foreach (var record in ParquetTextSource.ReadArticlesAsync(options.Input, options.Schema, options.Metadata))
         {
-            if (string.IsNullOrWhiteSpace(record.Body))
+            // Title-only documents are worth indexing: BM25 still matches the title,
+            // authors, institutions and journal that news prose names.
+            if (string.IsNullOrWhiteSpace(record.Body) && string.IsNullOrWhiteSpace(record.Title))
             {
                 skipped++;
                 continue;

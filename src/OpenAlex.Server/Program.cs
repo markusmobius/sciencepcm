@@ -30,6 +30,9 @@ var options = new ServerOptions
     Threads = builder.Configuration.GetValue("threads", 8),
     ParallelSearch = builder.Configuration.GetValue("parallel-search", true),
     MaxDocFreqRatio = builder.Configuration.GetValue("max-doc-freq-ratio", 0.0),
+    ExcludeWorkTypes = (builder.Configuration["exclude-types"] ?? "peer-review,dataset,paratext")
+        .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+    CitationPriorWeight = builder.Configuration.GetValue("citation-prior", 0.5),
     UseGpu = builder.Configuration.GetValue("gpu", false),
     GpuMemoryLimitBytes = builder.Configuration.GetValue<long>("gpu-mem-limit-gb", 0) * 1024L * 1024 * 1024,
 };
@@ -84,6 +87,8 @@ Console.WriteLine("service        : OpenAlex MCP");
 Console.WriteLine($"abstract index : {options.IndexPath} ({warmup.DocumentCount:N0} documents)");
 Console.WriteLine($"cross-encoder  : {options.CrossEncoderPath} (gpu={options.UseGpu})");
 Console.WriteLine($"rerank depth   : {options.RerankCandidates}");
+Console.WriteLine($"excluded types : {(options.ExcludeWorkTypes.Count == 0 ? "none" : string.Join(", ", options.ExcludeWorkTypes))}");
+Console.WriteLine($"citation prior : {options.CitationPriorWeight:0.##} x log10(1 + citations)");
 Console.WriteLine($"auth           : {(string.IsNullOrEmpty(token) ? "OPEN - no OPENALEX_TOKEN set" : "bearer token required")}");
 Console.WriteLine("mcp endpoint   : /mcp");
 

@@ -102,7 +102,13 @@ public static class LexicalIndex
             AddStored(document, JournalField, metadata.Journal);
             AddStored(document, IssnField, metadata.Issn);
             AddStored(document, LanguageField, metadata.Language);
-            AddStored(document, WorkTypeField, metadata.WorkType);
+            if (!string.IsNullOrEmpty(metadata.WorkType))
+            {
+                // Indexed, not merely stored, so peer reviews and datasets - which OpenAlex
+                // records alongside the paper they discuss - can be excluded by query.
+                document.Add(new StringField(
+                    WorkTypeField, metadata.WorkType.ToLowerInvariant(), Field.Store.YES));
+            }
             AddStored(document, VolumeField, metadata.Volume);
             AddStored(document, IssueField, metadata.Issue);
             AddStored(document, FirstPageField, metadata.FirstPage);
@@ -240,7 +246,8 @@ public sealed class LexicalSearcher : IDisposable
         int? yearMin = null,
         int? yearMax = null,
         string? section = null,
-        bool includeRetracted = true)
+        bool includeRetracted = true,
+        IReadOnlyCollection<string>? excludeWorkTypes = null)
     {
         // Built through the analyzer rather than a query parser, so that punctuation in a
         // natural-language question cannot throw a syntax error.
@@ -253,7 +260,8 @@ public sealed class LexicalSearcher : IDisposable
 
         Query effective = parsed;
         var needsFilter = yearMin is not null || yearMax is not null
-            || !string.IsNullOrWhiteSpace(section) || !includeRetracted;
+            || !string.IsNullOrWhiteSpace(section) || !includeRetracted
+            || excludeWorkTypes is { Count: > 0 };
 
         if (needsFilter)
         {
@@ -276,6 +284,17 @@ public sealed class LexicalSearcher : IDisposable
             if (!includeRetracted)
             {
                 combined.Add(new TermQuery(new Term(LexicalIndex.RetractedField, "true")), Occur.MUST_NOT);
+            }
+
+            if (excludeWorkTypes is { Count: > 0 })
+            {
+                foreach (var workType in excludeWorkTypes)
+                {
+                    if (string.IsNullOrWhiteSpace(workType)) continue;
+                    combined.Add(
+                        new TermQuery(new Term(LexicalIndex.WorkTypeField, workType.ToLowerInvariant())),
+                        Occur.MUST_NOT);
+                }
             }
 
             effective = combined;
@@ -363,9 +382,15 @@ public sealed class LexicalSearcher : IDisposable
             metadata);
     }
 
-    public List<LexicalHit> SearchArticles(string query, int k, int? yearMin = null, int? yearMax = null)
+    public List<LexicalHit> SearchArticles(
+        string query,
+        int k,
+        int? yearMin = null,
+        int? yearMax = null,
+        IReadOnlyCollection<string>? excludeWorkTypes = null)
     {
-        var passages = Search(query, k * _fetchMultiplier, yearMin, yearMax);
+        var passages = Search(
+            query, k * _fetchMultiplier, yearMin, yearMax, excludeWorkTypes: excludeWorkTypes);
         var best = new Dictionary<string, LexicalHit>(passages.Count);
 
         foreach (var hit in passages)

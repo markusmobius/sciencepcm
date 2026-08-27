@@ -4,15 +4,39 @@ This is the second MCP service. It shares the tested Lucene and cross-encoder en
 with SciencePCM, but every executable, artifact path, cloud path, token, tool name and
 network endpoint is OpenAlex-specific.
 
-The corpus is every work in the local OpenAlex snapshot for which
-`abstract_inverted_index` is nonempty. There is no neuroscience, year, topic or field
-filter and no full-text tier.
+The corpus is every work in the local OpenAlex snapshot that has a title or an abstract.
+There is no neuroscience, year, topic or field filter and no full-text tier.
 
-The v2 digest is designed to resolve paper mentions in newspaper articles. In addition
+Requiring a nonempty `abstract_inverted_index`, as v2 did, was a mistake. Elsevier and
+AAAS supply no abstracts to OpenAlex, so the ChAdOx1 Lancet paper and Jinek 2012 were
+both absent from the index while the peer reviews and Faculty Opinions records *about*
+them, which carry their titles, were present and ranked highly. A work with only a
+title is still matchable, because news prose names a paper by its title, authors,
+institutions and journal far more often than it quotes the abstract.
+
+The v3 digest is designed to resolve paper mentions in newspaper articles. In addition
 to title and abstract it retains publication date/year, authors, institutions, journal,
 ISSN, DOI, PMID, language, work type, citation count, volume/issue/pages, topics,
 keywords and retraction status. Lucene searches title, abstract, authors, institutions,
 journal, DOI, ISSN, topics and keywords; the other fields are returned for verification.
+
+## Ranking
+
+Two defaults exist to keep the paper itself above the literature about it:
+
+- `--exclude-types peer-review,dataset,paratext` drops work types that OpenAlex records
+  as separate works titled after the paper they discuss. Pass an empty value to disable.
+- `--citation-prior 0.5` adds `0.5 * log10(1 + cited_by_count)` to the rerank score.
+  It only ever adds, because OpenAlex sometimes holds duplicate records of one paper
+  with the citations split or lost between them; a zero-citation record keeps its rerank
+  score rather than being pushed down. Pass `0` to disable.
+
+The reranker is `BAAI/bge-reranker-v2-m3`. On 30 known-item news-to-paper queries it
+reached hit@1 40.0% and hit@10 76.7%, against 23.3% and 70.0% for
+`cross-encoder/ms-marco-MiniLM-L-6-v2`, for about 475 ms more per query. It is XLM-R
+based, so unlike the previous reranker it matches the multilingual corpus. Raising
+`--rerank-candidates` from 100 to 500 changed neither hit@1 nor hit@10, so the default
+stays at 100.
 
 ## Programs
 
@@ -23,6 +47,19 @@ journal, DOI, ISSN, topics and keywords; the other fields are returned for verif
 | `OpenAlex.Index` | A100 | Build the stored-field Lucene index. |
 | `openalex-a100.sh` | A100 | Pull, prepare, index and serve on port 8081. |
 | `OpenAlex.Server` | A100 | Serve the OpenAlex MCP endpoint. |
+
+## Upgrading a v2 deployment to v3
+
+The schema, the corpus filter and the reranker all changed, so nothing is reusable.
+Run the full sequence:
+
+1. On nerds21, re-ingest and overwrite the cloud path: `.\tools\openalex-sync.ps1 -Force`.
+2. On the A100, discard the old digest, index and reranker so `prepare` rebuilds them:
+   `rm -rf ~/openalex-data/abstracts ~/openalex-data/index ~/openalex-data/models/openalex-cross`.
+3. `bash tools/openalex-a100.sh prepare`, then restart the server.
+
+The index grows: v3 keeps works v2 dropped, and `work_type` is now an indexed term
+rather than a stored-only field.
 
 ## 1. nerds21
 
@@ -76,14 +113,12 @@ bash tools/openalex-a100.sh check
 bash tools/openalex-a100.sh prepare
 ```
 
-`prepare` pulls the digest into `~/openalex-data/abstracts`, exports the general-domain
-`cross-encoder/ms-marco-MiniLM-L-6-v2` reranker, builds with GPU ONNX Runtime, and
-creates `~/openalex-data/index/abstracts-bm25`. It skips completed stages on rerun.
+`prepare` pulls the digest into `~/openalex-data/abstracts`, exports the
+`BAAI/bge-reranker-v2-m3` reranker, builds with GPU ONNX Runtime, and creates
+`~/openalex-data/index/abstracts-bm25`. It skips completed stages on rerun.
 
-The corpus is multilingual, while Lucene's analyzer and this reranker are English
-oriented. Non-English records are retained but retrieval quality will be weaker. A
-truly multilingual reranker requires extending the C# tokenizer beyond BERT WordPiece;
-it should not be silently substituted without parity tests.
+The corpus is multilingual and so is the reranker, but Lucene's analyzer is English
+oriented, so non-English records are retained with weaker recall.
 
 Set an independent token and start the second server:
 

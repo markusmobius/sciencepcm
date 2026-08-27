@@ -82,8 +82,9 @@ internal static class Program
         await WriteReportAsync(options, files.Count, stats, stopwatch.Elapsed);
         Console.WriteLine();
         Console.WriteLine($"Works read          : {stats.RecordsRead:N0}");
-        Console.WriteLine($"Abstracts written   : {stats.AbstractsWritten:N0}");
-        Console.WriteLine($"Without abstract    : {stats.WithoutAbstract:N0}");
+        Console.WriteLine($"Works written       : {stats.AbstractsWritten:N0}");
+        Console.WriteLine($"Title only          : {stats.WithoutAbstract:N0}");
+        Console.WriteLine($"No title, no abstract: {stats.WithoutText:N0}");
         Console.WriteLine($"Invalid records     : {stats.InvalidRecords:N0}");
         Console.WriteLine($"Files failed        : {stats.FilesFailed:N0}");
         Console.WriteLine($"Elapsed             : {stopwatch.Elapsed}");
@@ -117,17 +118,28 @@ internal static class Program
                     continue;
                 }
 
+                var title = work.Title ?? work.DisplayName;
                 var abstractText = ReconstructAbstract(work.AbstractInvertedIndex);
                 if (string.IsNullOrWhiteSpace(abstractText))
                 {
                     Interlocked.Increment(ref stats.WithoutAbstract);
+                    abstractText = null;
+                }
+
+                // Major publishers (Elsevier, AAAS) supply no abstract to OpenAlex, so
+                // requiring one dropped landmark papers while keeping the peer reviews and
+                // commentaries written about them. Title plus authors, institutions and
+                // journal is enough to match a paper named in a news article.
+                if (string.IsNullOrWhiteSpace(title) && abstractText is null)
+                {
+                    Interlocked.Increment(ref stats.WithoutText);
                     continue;
                 }
 
                 await writer.WriteAsync(new OpenAlexAbstractRow
                 {
                     openalex_id = work.Id,
-                    title = work.Title ?? work.DisplayName,
+                    title = title,
                     @abstract = abstractText,
                     publication_date = work.PublicationDate,
                     publication_year = work.PublicationYear,
@@ -228,7 +240,7 @@ internal static class Program
         });
 
         stats.AbstractsWritten += rows.Count;
-        Console.WriteLine($"  wrote {Path.GetFileName(path)}: {rows.Count:N0} abstracts");
+        Console.WriteLine($"  wrote {Path.GetFileName(path)}: {rows.Count:N0} works");
         rows.Clear();
     }
 
@@ -239,15 +251,16 @@ internal static class Program
             dataset_name = "OpenAlex abstracts",
             created_at = DateTimeOffset.UtcNow,
             input = Path.GetFullPath(options.Input),
-            output_schema = "openalex-abstracts-v2",
+            output_schema = "openalex-abstracts-v3",
             shard_size = options.ShardSize,
             counts = new
             {
                 files_discovered = files,
                 files_failed = stats.FilesFailed,
                 works_read = stats.RecordsRead,
-                abstracts_written = stats.AbstractsWritten,
+                works_written = stats.AbstractsWritten,
                 without_abstract = stats.WithoutAbstract,
+                without_text = stats.WithoutText,
                 invalid_records = stats.InvalidRecords,
             },
             elapsed_seconds = elapsed.TotalSeconds,
@@ -352,6 +365,7 @@ internal sealed class IngestStats
     public long RecordsRead;
     public long AbstractsWritten;
     public long WithoutAbstract;
+    public long WithoutText;
     public long InvalidRecords;
     public int FilesRead;
     public int FilesFailed;
