@@ -284,18 +284,34 @@ Alternatively, the provisioning helper rebuilds both indexes with the correct me
 bash tools/gcr-prep.sh --force-index --skip-pull --skip-models
 ```
 
-### 2. Export the cross-encoder
+### 2. Export the reranker
 
-Only needed once, and already done if `~/sciencepcm-data/models/medcpt-cross` exists.
+Only needed once, and already done by `gcr-prep.sh` if
+`~/sciencepcm-data/models/bge-reranker` exists.
 
 ```bash
 ~/sciencepcm-data/venvs/lab/bin/python tools/export_onnx.py \
-  --out ~/sciencepcm-data/models --cross-only
+  --out ~/sciencepcm-data/models --reranker BAAI/bge-reranker-v2-m3
 ```
 
-It self-checks: PyTorch vs ONNX Runtime parity, a different batch shape at verification
-than at export, and matched query/passage pairs must outscore deliberately mismatched
-ones.
+**BGE is the served reranker.** An LLM judge over 400 questions put it at 0.851 graded
+nDCG@10 against MedCPT's 0.781; on the same pooled run `bge-reranker-base` scored 0.759,
+so size and training data decided this, not recency. MedCPT remains selectable - export
+it with `--cross-only` and point `--cross-encoder` at `medcpt-cross`. The server picks
+the tokenizer from the directory: a `tokenizer.onnx` means SentencePiece, otherwise
+WordPiece.
+
+The export self-checks: PyTorch vs ONNX Runtime parity, a different batch shape at
+verification than at export, and matched query/passage pairs must outscore deliberately
+mismatched ones.
+
+Pairs are assembled in C#, so verify that too before serving:
+
+```bash
+dotnet run --project src/SciencePcm.Embed -c Release --no-build -- \
+  --model ~/sciencepcm-data/models/bge-reranker \
+  --verify-pairs ~/sciencepcm-data/models/bge-reranker/tokenizer-parity.json
+```
 
 ### 3. Set the token
 
@@ -319,7 +335,7 @@ cd ~/sciencepcm
 dotnet run --project src/SciencePcm.Server -c Release -p:UseGpu=true -- \
   --index ~/sciencepcm-data/index/abstracts-bm25 \
   --passage-index ~/sciencepcm-data/index/passages-bm25 \
-  --cross-encoder ~/sciencepcm-data/models/medcpt-cross \
+  --cross-encoder ~/sciencepcm-data/models/bge-reranker \
   --gpu \
   --urls http://0.0.0.0:8080
 ```

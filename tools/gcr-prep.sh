@@ -31,6 +31,7 @@ SKIP_MODELS=0
 SKIP_BUILD=0
 SKIP_INDEX=0
 FORCE_INDEX=0
+WITH_MEDCPT=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -41,6 +42,7 @@ while [[ $# -gt 0 ]]; do
         --skip-build)  SKIP_BUILD=1 ;;
         --skip-index)  SKIP_INDEX=1 ;;
         --force-index) FORCE_INDEX=1 ;;
+        --with-medcpt) WITH_MEDCPT=1 ;;
         -h|--help)     sed -n '2,15p' "${BASH_SOURCE[0]}"; exit 0 ;;
         *)             echo "Unknown argument: $1" >&2; exit 1 ;;
     esac
@@ -241,20 +243,35 @@ pull "sciencepcm/questions"            "questions"
 
 step "Models"
 
+# The reranker is the only model on the serving path. MedCPT's encoders are only
+# needed to revisit dense retrieval, which the LLM judge ruled out, so they are opt-in.
 if [[ $SKIP_MODELS -eq 1 ]]; then
     warn "skipped"
-elif [[ -f "$MODELS/medcpt-article/model.onnx" ]]; then
-    info "already exported"
-elif [[ $CHECK_ONLY -eq 1 ]]; then
-    warn "would export MedCPT article + query encoders to $MODELS"
 else
-    info "checking HuggingFace reachability ..."
-    hf_status="$(curl -sSL -o /dev/null -w '%{http_code}' \
-        https://huggingface.co/ncbi/MedCPT-Article-Encoder/resolve/main/config.json || echo 000)"
-    [[ "$hf_status" == "200" ]] || die "HuggingFace returned $hf_status. Sync the models from nerds21 with -IncludeOptional instead."
+    if [[ -f "$MODELS/bge-reranker/model.onnx" ]]; then
+        info "bge-reranker           already exported"
+    elif [[ $CHECK_ONLY -eq 1 ]]; then
+        warn "bge-reranker           would export to $MODELS"
+    else
+        info "checking HuggingFace reachability ..."
+        hf_status="$(curl -sSL -o /dev/null -w '%{http_code}' \
+            https://huggingface.co/BAAI/bge-reranker-v2-m3/resolve/main/config.json || echo 000)"
+        [[ "$hf_status" == "200" ]] || die "HuggingFace returned $hf_status. Sync the models from nerds21 instead."
 
-    info "exporting to ONNX (this downloads ~900 MB of weights) ..."
-    "$LAB_PY" "$REPO/tools/export_onnx.py" --out "$MODELS"
+        info "bge-reranker           exporting (~2.2 GB of weights) ..."
+        "$LAB_PY" "$REPO/tools/export_onnx.py" --out "$MODELS" --reranker BAAI/bge-reranker-v2-m3
+    fi
+
+    if [[ $WITH_MEDCPT -eq 1 ]]; then
+        if [[ -f "$MODELS/medcpt-article/model.onnx" ]]; then
+            info "medcpt                 already exported"
+        elif [[ $CHECK_ONLY -eq 1 ]]; then
+            warn "medcpt                 would export encoders + cross-encoder"
+        else
+            info "medcpt                 exporting (~900 MB of weights) ..."
+            "$LAB_PY" "$REPO/tools/export_onnx.py" --out "$MODELS"
+        fi
+    fi
 fi
 
 # ---------------------------------------------------------------- build
@@ -339,7 +356,7 @@ cat <<EOF
     dotnet run --project src/SciencePcm.Server -c Release -p:UseGpu=true -- \\
       --index $INDEXES/abstracts-bm25 \\
       --passage-index $INDEXES/passages-bm25 \\
-      --cross-encoder $MODELS/medcpt-cross \\
+      --cross-encoder $MODELS/bge-reranker \\
       --gpu --urls http://0.0.0.0:8080
 
   Expose it (relay holds the public TLS endpoint):
