@@ -28,6 +28,8 @@ var options = new ServerOptions
     RerankCandidates = builder.Configuration.GetValue("rerank-candidates", 100),
     RerankBatch = builder.Configuration.GetValue("rerank-batch", 32),
     Threads = builder.Configuration.GetValue("threads", 8),
+    ParallelSearch = builder.Configuration.GetValue("parallel-search", true),
+    MaxDocFreqRatio = builder.Configuration.GetValue("max-doc-freq-ratio", 0.0),
     UseGpu = builder.Configuration.GetValue("gpu", false),
     GpuMemoryLimitBytes = builder.Configuration.GetValue<long>("gpu-mem-limit-gb", 0) * 1024L * 1024 * 1024,
 };

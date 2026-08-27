@@ -13,6 +13,8 @@ public sealed record ServerOptions
     public int RerankBatch { get; init; } = 32;
     public int MaxTokens { get; init; } = 512;
     public int Threads { get; init; } = 8;
+    public bool ParallelSearch { get; init; } = true;
+    public double MaxDocFreqRatio { get; init; }
     public bool UseGpu { get; init; }
     public long GpuMemoryLimitBytes { get; init; }
 }
@@ -49,10 +51,12 @@ public sealed class RetrievalService : IDisposable
     public RetrievalService(ServerOptions options)
     {
         _options = options;
-        _lexical = new LexicalSearcher(options.IndexPath);
+        _lexical = new LexicalSearcher(
+            options.IndexPath, 4, options.ParallelSearch, options.MaxDocFreqRatio);
         _passages = string.IsNullOrWhiteSpace(options.PassageIndexPath)
             ? null
-            : new LexicalSearcher(options.PassageIndexPath);
+            : new LexicalSearcher(
+                options.PassageIndexPath, 4, options.ParallelSearch, options.MaxDocFreqRatio);
 
         _session = TextEmbedder.CreateSession(
             options.CrossEncoderPath,

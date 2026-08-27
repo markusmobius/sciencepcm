@@ -188,14 +188,34 @@ public sealed class LexicalSearcher : IDisposable
     private readonly IndexSearcher _searcher;
     private readonly Analyzer _analyzer;
     private readonly int _fetchMultiplier;
+    private readonly double _maxDocFreqRatio;
 
-    public LexicalSearcher(string indexPath, int fetchMultiplier = 4)
+    /// <param name="parallel">
+    /// Search index segments concurrently. On a 256M document index a long query spends
+    /// seconds scoring on one core while the rest of the machine idles.
+    /// </param>
+    /// <param name="maxDocFreqRatio">
+    /// Drop query terms appearing in more than this fraction of documents. Words like
+    /// "researchers" or "reported" match tens of millions of documents and contribute
+    /// almost nothing to ranking, but Lucene 4.8 has no BlockMax-WAND so it scores every
+    /// one of them. 0 disables the filter.
+    /// </param>
+    public LexicalSearcher(
+        string indexPath,
+        int fetchMultiplier = 4,
+        bool parallel = true,
+        double maxDocFreqRatio = 0)
     {
         _directory = FSDirectory.Open(indexPath);
         _reader = DirectoryReader.Open(_directory);
         _analyzer = LexicalIndex.CreateAnalyzer();
         _fetchMultiplier = Math.Max(1, fetchMultiplier);
-        _searcher = new IndexSearcher(_reader) { Similarity = new BM25Similarity() };
+        _maxDocFreqRatio = maxDocFreqRatio;
+
+        _searcher = parallel
+            ? new IndexSearcher(_reader, TaskScheduler.Default)
+            : new IndexSearcher(_reader);
+        _searcher.Similarity = new BM25Similarity();
     }
 
     public int Count => _reader.NumDocs;
@@ -226,6 +246,9 @@ public sealed class LexicalSearcher : IDisposable
         // natural-language question cannot throw a syntax error.
         var builder = new QueryBuilder(_analyzer);
         var parsed = builder.CreateBooleanQuery(LexicalIndex.SearchField, query, Occur.SHOULD);
+        if (parsed is null) return [];
+
+        parsed = TrimCommonTerms(parsed);
         if (parsed is null) return [];
 
         Query effective = parsed;
@@ -267,6 +290,33 @@ public sealed class LexicalSearcher : IDisposable
         }
 
         return hits;
+    }
+
+    /// <summary>
+    /// Removes terms so common that scoring them costs far more than they inform. Keeps
+    /// everything if that would leave nothing to search on - a query made entirely of
+    /// common words still has to return something.
+    /// </summary>
+    private BooleanQuery? TrimCommonTerms(Query query)
+    {
+        if (_maxDocFreqRatio <= 0 || query is not BooleanQuery boolean) return query as BooleanQuery;
+
+        var ceiling = (int)(_reader.NumDocs * _maxDocFreqRatio);
+        var kept = new BooleanQuery();
+        var dropped = 0;
+
+        foreach (var clause in boolean.Clauses)
+        {
+            if (clause.Query is TermQuery term && _reader.DocFreq(term.Term) > ceiling)
+            {
+                dropped++;
+                continue;
+            }
+            kept.Add(clause);
+        }
+
+        if (kept.Clauses.Count == 0) return boolean;
+        return dropped == 0 ? boolean : kept;
     }
 
     private static LexicalHit ToHit(Document document, float score)
