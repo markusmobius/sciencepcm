@@ -8,7 +8,7 @@
 # Check on it:
 #   systemctl status mcp-tunnel
 #   journalctl -u mcp-tunnel -f
-#   ssh <relay> 'ss -tlnp | grep 9201'
+#   ssh <relay> 'ss -tlnp | grep -E "9201|9202"'
 #
 # The key must be passphrase-less and already accepted by the relay; see
 # tools/mcp-tunnel.sh for how to create and restrict it.

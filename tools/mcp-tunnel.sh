@@ -11,8 +11,9 @@
 set -uo pipefail
 
 REMOTE="${REMOTE:-markusmobius@www.llmserver.econlabs.org}"
-# Space-separated remote:local pairs, in case more than one service needs forwarding.
-FORWARDS="${FORWARDS:-9201:8080}"
+# SciencePCM uses 9201 -> 8080; OpenAlex MCP uses 9202 -> 8081.
+# Override with a space-separated list when only a subset is required.
+FORWARDS="${FORWARDS:-9201:8080 9202:8081}"
 KEY="${KEY:-$HOME/.ssh/id_ed25519}"
 RETRY_SECONDS="${RETRY_SECONDS:-5}"
 

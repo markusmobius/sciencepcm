@@ -352,7 +352,8 @@ One SSH connection, one forward:
 | --- | --- | --- |
 | 9201 | 8080 | `https://www.sciencemcp.econlabs.org` — production |
 
-Add more with `FORWARDS="9201:8080 9202:8081"`. The nginx vhosts live in
+By default the script forwards both SciencePCM (`9201:8080`) and OpenAlex MCP
+(`9202:8081`). Override the `FORWARDS` variable to run only a subset. The nginx vhosts live in
 `deploy/nginx/`; each file carries its own install instructions in a header comment.
 `www.mcptest.econlabs.org` is a staging endpoint served by a process running on the
 relay itself, so it needs no forward here.
