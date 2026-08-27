@@ -73,7 +73,8 @@ def sample_from_parquet(glob: str, sample: int, control: bool, where: str | None
 
         # The filter has to sit in a subquery: DuckDB applies USING SAMPLE before WHERE,
         # so the obvious phrasing samples the whole corpus and then filters the sample
-        # down to a handful of rows.        rows = connection.execute(
+        # down to a handful of rows.
+        rows = connection.execute(
             f"""
             SELECT * FROM (
                 SELECT openalex_id, title, doi, publication_year, type, cited_by_count
@@ -139,7 +140,13 @@ def fetch_batch(session: requests.Session, dois: list[str], sleep: float) -> lis
             time.sleep(backoff)
             continue
 
-        response.raise_for_status()
+        # S2 rejects the whole chunk when not one id resolves, which is a legitimate
+        # answer - none of them are in S2 - rather than a reason to abandon the run.
+        if response.status_code == 400 and "No valid paper ids" in response.text:
+            return [None] * len(dois)
+
+        raise RuntimeError(
+            f"batch failed: HTTP {response.status_code} {response.text[:300]}")
 
     raise RuntimeError(f"batch failed after 5 attempts (last status {response.status_code})")
 
