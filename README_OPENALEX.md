@@ -20,6 +20,25 @@ ISSN, DOI, PMID, language, work type, citation count, volume/issue/pages, topics
 keywords and retraction status. Lucene searches title, abstract, authors, institutions,
 journal, DOI, ISSN, topics and keywords; the other fields are returned for verification.
 
+## Why there is no Semantic Scholar merge
+
+Measured with `eval/s2_probe.py` on 500 works matching
+`has_abstract:false,type:article,cited_by_count:>50` — the exact population a merge
+would target. 92.6% carry a DOI and 84.0% of those resolve in S2, so the join works;
+titles agree 92.5% of the time, meaning roughly 1 in 13 DOIs points at a different
+paper in the two databases and any merge would have to verify the title before
+accepting anything.
+
+S2 supplies an abstract for only **16.0%** of them. On a control cohort where OpenAlex
+already has an abstract the rate is 29.2%, so S2's coverage is limited by
+redistribution rights rather than by whether the abstract exists: it fails on the same
+paywalled publishers OpenAlex fails on. A merge would recover a sixth of the gap for a
+bulk download, a DOI join and a re-ingest.
+
+33.3% of the same cohort do have an open-access PDF, which is where S2ORC full text
+would come from. That remains the only reason to revisit Semantic Scholar, and it is a
+full-text project rather than an abstract one.
+
 ## Ranking
 
 Two defaults exist to keep the paper itself above the literature about it:
