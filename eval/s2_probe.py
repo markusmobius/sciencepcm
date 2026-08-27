@@ -108,6 +108,15 @@ def load_doi_file(path: Path) -> list[dict]:
     return records
 
 
+def titles_agree(left: str | None, right: str | None) -> bool | None:
+    """Cheap guard against a silently misaligned join: a DOI lookup that returns a
+    different paper's title means the answers came back out of order."""
+    if not left or not right:
+        return None
+    reduce = lambda text: "".join(c for c in text.lower() if c.isalnum())[:40]
+    return reduce(left) == reduce(right)
+
+
 def fetch_batch(session: requests.Session, dois: list[str], sleep: float) -> list[dict | None]:
     body = {"ids": [f"DOI:{doi}" for doi in dois]}
 
@@ -140,7 +149,14 @@ def probe(records: list[dict], api_key: str | None, sleep: float) -> list[dict]:
         chunk = resolvable[start:start + BATCH_SIZE]
         answers = fetch_batch(session, [record["doi"] for record in chunk], sleep)
 
-        # The endpoint answers positionally, with null where the id did not resolve.
+        # The endpoint answers positionally, with null where the id did not resolve. If
+        # that ever stops holding, every field below is attached to the wrong paper, so
+        # fail loudly rather than produce a plausible-looking wrong answer.
+        if len(answers) != len(chunk):
+            raise RuntimeError(
+                f"batch returned {len(answers)} answers for {len(chunk)} ids; "
+                "positional alignment is unsafe")
+
         for record, answer in zip(chunk, answers):
             record["s2_found"] = answer is not None
             record["s2_abstract"] = (answer or {}).get("abstract")
@@ -148,6 +164,7 @@ def probe(records: list[dict], api_key: str | None, sleep: float) -> list[dict]:
             record["s2_corpus_id"] = (answer or {}).get("externalIds", {}).get("CorpusId")
             record["s2_is_oa"] = (answer or {}).get("isOpenAccess")
             record["s2_oa_pdf"] = ((answer or {}).get("openAccessPdf") or {}).get("url")
+            record["title_match"] = titles_agree(record.get("title"), record.get("s2_title"))
 
         print(f"  {min(start + BATCH_SIZE, len(resolvable)):,}/{len(resolvable):,}", file=sys.stderr)
 
@@ -162,6 +179,8 @@ def summarise(records: list[dict]) -> dict:
         found = [record for record in with_doi if record.get("s2_found")]
         with_abstract = [record for record in found if (record.get("s2_abstract") or "").strip()]
         with_pdf = [record for record in found if record.get("s2_oa_pdf")]
+        comparable = [record for record in found if record.get("title_match") is not None]
+        agreeing = [record for record in comparable if record["title_match"]]
 
         summary[cohort] = {
             "sampled": len(rows),
@@ -178,6 +197,8 @@ def summarise(records: list[dict]) -> dict:
             "oa_pdf_rate": len(with_pdf) / len(rows) if rows else 0.0,
             "s2_found_of_resolvable": len(found) / len(with_doi) if with_doi else 0.0,
             "abstract_of_found": len(with_abstract) / len(found) if found else 0.0,
+            # Well below 1.0 means the join is wrong and every other number here is junk.
+            "title_agreement": len(agreeing) / len(comparable) if comparable else None,
         }
     return summary
 
