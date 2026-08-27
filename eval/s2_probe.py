@@ -25,7 +25,8 @@ Usage:
     python eval/s2_probe.py --dois missing.txt --out runs/s2-probe.jsonl
 
 An API key raises the rate limit a long way. Get one at
-https://www.semanticscholar.org/product/api and pass --api-key or set S2_API_KEY.
+https://www.semanticscholar.org/product/api and pass --api-key, or set SEMANTIC_S3
+(or S2_API_KEY).
 """
 
 from __future__ import annotations
@@ -184,7 +185,7 @@ def main() -> int:
     parser.add_argument("--sample", type=int, default=500, help="Records per cohort. Default 500.")
     parser.add_argument("--control", action="store_true",
                         help="Also sample works that DO have an OpenAlex abstract, to validate the join.")
-    parser.add_argument("--api-key", default=os.environ.get("S2_API_KEY"))
+    parser.add_argument("--api-key", default=os.environ.get("SEMANTIC_S3") or os.environ.get("S2_API_KEY"))
     parser.add_argument("--sleep", type=float, default=1.0, help="Seconds between batches. Default 1.")
     parser.add_argument("--out", type=Path, default=Path("runs/s2-probe.jsonl"))
     args = parser.parse_args()
