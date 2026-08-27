@@ -63,7 +63,7 @@ def ndcg_at_k(ranked_grades: list[int], pooled_grades: list[int], k: int) -> flo
     return dcg(ranked_grades[:k]) / ideal if ideal > 0 else 0.0
 
 
-async def judge_pairs(pairs, texts, questions, model, workers, unit):
+async def judge_pairs(pairs, texts, questions, model, workers, unit, prompt):
     """Grade every pair, returning {"query_id|key": grade}."""
     from LlmClient.LlmLib import LlmFactory
     from LlmClient.Models import Chat
@@ -91,7 +91,7 @@ async def judge_pairs(pairs, texts, questions, model, workers, unit):
                     return
 
                 chat = Chat(responseSchema=GRADE_SCHEMA, model=model)
-                chat.AddSystemMessage(SYSTEM_PROMPT.format(unit=unit))
+                chat.AddSystemMessage(prompt.format(unit=unit))
                 chat.AddUserMessage(
                     f"Question: {questions[query_id]}\n\n"
                     f"{unit.capitalize()}:\n{texts[key]}\n\n"
@@ -135,6 +135,13 @@ def main() -> int:
         choices=["paper", "passage"],
         help="What a hit is. Use passage when judging search_full_text.",
     )
+    parser.add_argument(
+        "--prompt-file",
+        type=Path,
+        default=None,
+        help="Replace the grading rubric. Known-item matching and topical relevance are "
+        "different judgements and need different rubrics.",
+    )
     parser.add_argument("--top", type=int, default=10, help="Depth to judge and score.")
     parser.add_argument("--sample", type=int, default=150, help="Queries to judge.")
     parser.add_argument("--workers", type=int, default=32, help="The server runs 50 threads.")
@@ -142,6 +149,8 @@ def main() -> int:
     parser.add_argument("--seed", type=int, default=11)
     parser.add_argument("--out", type=Path, default=None)
     args = parser.parse_args()
+
+    prompt = args.prompt_file.read_text(encoding="utf-8") if args.prompt_file else SYSTEM_PROMPT
 
     for variable in ("LLM_SERVER_URL", "LLM_USER_CODE"):
         if not os.getenv(variable):
@@ -202,7 +211,9 @@ def main() -> int:
 
     pairs = [(qid, key) for qid, keys in pooled.items() for key in keys if key in texts]
 
-    grades = asyncio.run(judge_pairs(pairs, texts, questions, args.model, args.workers, args.unit))
+    grades = asyncio.run(
+        judge_pairs(pairs, texts, questions, args.model, args.workers, args.unit, prompt)
+    )
 
     results = {}
     print()

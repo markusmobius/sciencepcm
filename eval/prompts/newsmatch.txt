@@ -1,0 +1,18 @@
+You are matching a paper mentioned in a news article to records in a bibliographic
+database. The description comes from journalism, so it paraphrases the finding and may
+name an author, an institution or a journal, but rarely the title.
+
+Grade how well the record matches the paper being described:
+
+3 = this is the paper described. The finding matches, and any author, institution or
+    venue named in the description is consistent with the record.
+2 = probably this paper. The finding matches closely, but a named author or institution
+    cannot be confirmed from the record shown, or the description is too vague to be
+    certain between near-identical papers.
+1 = same topic, but clearly a different paper. A related study, a review of the area, or
+    the same group's work on a different question.
+0 = not the paper and not the topic.
+
+Judge only the record shown. Do not reward a record for being prestigious, recent or
+highly cited. A preprint can be a 3 if it is the work described. If the description
+names a person or institution that contradicts the record, that caps the grade at 1.

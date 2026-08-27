@@ -84,6 +84,31 @@ class McpSession:
         return json.loads(text)
 
 
+def compose_text(hit: dict) -> str:
+    """Title, identifying metadata, then body.
+
+    Known-item matching turns on author, institution and venue, so the judge has to see
+    them. Fields absent from a given server are simply skipped.
+    """
+    parts = []
+    if hit.get("title"):
+        parts.append(str(hit["title"]))
+
+    meta = [
+        str(hit[field])
+        for field in ("authors", "institutions", "journal", "publication_date", "year", "doi", "pmid")
+        if hit.get(field)
+    ]
+    if meta:
+        parts.append(" | ".join(meta))
+
+    body = hit.get("text") or hit.get("abstract_excerpt") or hit.get("abstract") or ""
+    if body:
+        parts.append(str(body))
+
+    return "\n".join(parts)
+
+
 def load_queries(path: Path, limit: int | None) -> list[dict]:
     with path.open(encoding="utf-8") as stream:
         records = [json.loads(line) for line in stream if line.strip()]
@@ -148,7 +173,7 @@ def main() -> int:
             scores.append(hit.get("score", 0.0))
             # Carried along so the judge can grade what the server actually returned,
             # rather than looking the document up again and grading something else.
-            texts.append(hit.get("text") or hit.get("abstract_excerpt") or "")
+            texts.append(compose_text(hit))
 
         with lock:
             done += 1
