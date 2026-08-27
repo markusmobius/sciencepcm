@@ -169,10 +169,15 @@ def summarise(records: list[dict]) -> dict:
             "s2_found": len(found),
             "s2_has_abstract": len(with_abstract),
             "s2_has_oa_pdf": len(with_pdf),
-            # Denominator is the whole cohort, not the resolvable subset: a work with
-            # no DOI is just as unfillable as one S2 has never heard of.
+            # Two denominators, because they answer different questions. Rates over the
+            # whole cohort say what a merge would recover; rates over the resolvable
+            # subset say whether S2 and the DOI join work at all. A corpus with few DOIs
+            # drags the first down while the second stays high.
+            "doi_rate": len(with_doi) / len(rows) if rows else 0.0,
             "abstract_fill_rate": len(with_abstract) / len(rows) if rows else 0.0,
             "oa_pdf_rate": len(with_pdf) / len(rows) if rows else 0.0,
+            "s2_found_of_resolvable": len(found) / len(with_doi) if with_doi else 0.0,
+            "abstract_of_found": len(with_abstract) / len(found) if found else 0.0,
         }
     return summary
 
@@ -210,11 +215,15 @@ def main() -> int:
     print()
     for cohort, counts in summary.items():
         total = counts["sampled"]
+        resolvable = counts["with_doi"]
         print(f"cohort: {cohort}  sampled {total:,}")
-        for label, key in (("with DOI", "with_doi"), ("found in S2", "s2_found"),
-                           ("S2 has abstract", "s2_has_abstract"), ("S2 has OA PDF", "s2_has_oa_pdf")):
+        print(f"  {'with DOI':<22}{resolvable:>7,} ({resolvable / total:6.1%} of cohort)")
+        for label, key in (("found in S2", "s2_found"),
+                           ("S2 has abstract", "s2_has_abstract"),
+                           ("S2 has OA PDF", "s2_has_oa_pdf")):
             value = counts[key]
-            print(f"  {label:<22}{value:>7,} ({value / total:6.1%})")
+            share = value / resolvable if resolvable else 0.0
+            print(f"  {label:<22}{value:>7,} ({value / total:6.1%} of cohort, {share:6.1%} of DOIs)")
         print()
 
     print(f"wrote {args.out}")
