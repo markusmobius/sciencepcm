@@ -34,7 +34,7 @@ var options = new ServerOptions
 
 var token = builder.Configuration["token"] ?? Environment.GetEnvironmentVariable("OPENALEX_TOKEN");
 var corsOrigins = (builder.Configuration["cors-origins"]
-        ?? "https://www.openalexmcp.econlabs.org,http://localhost:5173,http://127.0.0.1:5173")
+    ?? "https://www.mcptest.econlabs.org,http://localhost:5173,http://127.0.0.1:5173")
     .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
 builder.Services.AddCors(cors => cors.AddDefaultPolicy(policy => policy
