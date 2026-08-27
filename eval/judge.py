@@ -217,11 +217,11 @@ def main() -> int:
 
     results = {}
     print()
-    print(f"{'system':<28} {'nDCG@' + str(args.top):>9} {'mean grade':>11} {'% >=2':>7}")
-    print("-" * 60)
+    print(f"{'system':<28} {'nDCG@' + str(args.top):>9} {'mean grade':>11} {'% >=2':>7} {'hit@1':>7} {'hit@k':>7} {'MRR':>7}")
+    print("-" * 86)
 
     for label, run in zip(labels, runs):
-        scores, means, strong = [], [], []
+        scores, means, strong, first, found, reciprocal = [], [], [], [], [], []
         for query_id in chosen:
             pool_grades = [grades.get(f"{query_id}|{k}") for k in pooled[query_id]]
             pool_grades = [g for g in pool_grades if g is not None]
@@ -232,13 +232,30 @@ def main() -> int:
             means.append(sum(ranked) / len(ranked) if ranked else 0)
             strong.append(sum(1 for g in ranked if g >= 2) / len(ranked) if ranked else 0)
 
+            # Known-item retrieval lives or dies on the top result, which an average over
+            # ten hits hides completely.
+            first.append(1.0 if ranked and ranked[0] >= 2 else 0.0)
+            found.append(1.0 if any(g >= 2 for g in ranked) else 0.0)
+            rank = next((i for i, g in enumerate(ranked, start=1) if g >= 2), None)
+            reciprocal.append(1.0 / rank if rank else 0.0)
+
+        def mean(values):
+            return sum(values) / len(values) if values else 0.0
+
         results[label] = {
-            f"ndcg@{args.top}": sum(scores) / len(scores),
-            "mean_grade": sum(means) / len(means),
-            "fraction_relevant": sum(strong) / len(strong),
+            f"ndcg@{args.top}": mean(scores),
+            "mean_grade": mean(means),
+            "fraction_relevant": mean(strong),
+            "hit_at_1": mean(first),
+            f"hit_at_{args.top}": mean(found),
+            "mrr": mean(reciprocal),
         }
         r = results[label]
-        print(f"{label:<28} {r[f'ndcg@{args.top}']:>9.4f} {r['mean_grade']:>11.3f} {r['fraction_relevant']:>7.1%}")
+        print(
+            f"{label:<28} {r[f'ndcg@{args.top}']:>9.4f} {r['mean_grade']:>11.3f} "
+            f"{r['fraction_relevant']:>7.1%} {r['hit_at_1']:>7.1%} "
+            f"{r[f'hit_at_{args.top}']:>7.1%} {r['mrr']:>7.3f}"
+        )
 
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)
