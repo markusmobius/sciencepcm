@@ -81,6 +81,14 @@ class McpSession:
     def call_tool(self, name: str, arguments: dict):
         result = self._call("tools/call", {"name": name, "arguments": arguments})
         text = "".join(part.get("text", "") for part in result.get("content", []))
+
+        # A failing tool answers with isError and its message as content, or with nothing
+        # at all. Either way json.loads would raise something that hides the real cause.
+        if result.get("isError"):
+            raise RuntimeError(f"tool '{name}' failed: {text[:500] or '(no message)'}")
+        if not text.strip():
+            raise RuntimeError(f"tool '{name}' returned no content: {json.dumps(result)[:500]}")
+
         return json.loads(text)
 
 
