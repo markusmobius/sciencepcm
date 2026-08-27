@@ -44,6 +44,14 @@ uv venv .venv --python 3.12
 uv pip install --python .venv -r requirements/eval.txt
 ```
 
+On the corporate network pypi.org is blocked, so point uv at the proxy first. uv does
+not read `pip.ini`, so this must be set in the environment:
+
+```powershell
+$env:UV_DEFAULT_INDEX = 'https://packagefeedproxy.microsoft.io/pypi/simple/'
+$env:UV_INDEX_URL = 'https://packagefeedproxy.microsoft.io/pypi/simple/'
+```
+
 The commands below invoke `.venv` directly, so activation is unnecessary and the
 PowerShell execution policy does not need to be changed.
 
@@ -115,10 +123,12 @@ Use a stable `query_id` and assign each question to a stratum:
 - **Synthesis:** conclusions requiring evidence from multiple papers.
 - **Coverage checks:** questions for which the corpus may have insufficient evidence.
 
-Balance broad and methods questions. ScienceMCP full text covers only about 23% of the
-abstract corpus, so an evaluation made entirely of methods questions tests both answer
-quality and this known coverage ceiling. Include some questions whose best answer is
-qualified uncertainty rather than a confident number.
+Balance broad and methods questions. Most papers in the ScienceMCP corpus have **no**
+full text, and full text covers 2019-2025 only, so an evaluation made entirely of
+methods questions tests both answer quality and this coverage ceiling. Call
+`corpus_stats` for the measured figure rather than assuming one; the server reports the
+number of papers with full text against the number of indexed papers. Include some
+questions whose best answer is qualified uncertainty rather than a confident number.
 
 The existing [`eval/questions-methods.jsonl`](eval/questions-methods.jsonl) can seed the
 methods stratum. It was created for retrieval evaluation and is not by itself a final

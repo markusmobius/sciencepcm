@@ -71,6 +71,9 @@ public sealed class RetrievalService : IDisposable
 
     public int PassageCount => _passages?.Count ?? 0;
 
+    /// <summary>Papers with full text, as opposed to passages.</summary>
+    public long FullTextArticleCount => _passages?.DistinctArticleCount ?? 0;
+
     public bool HasFullText => _passages is not null;
 
     public IReadOnlyList<SearchResult> Search(

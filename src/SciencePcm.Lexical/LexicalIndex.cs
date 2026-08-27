@@ -200,6 +200,20 @@ public sealed class LexicalSearcher : IDisposable
 
     public int Count => _reader.NumDocs;
 
+    /// <summary>
+    /// Distinct article keys, which for the passage index is how many papers have full
+    /// text - not the same as the passage count, since one paper yields many passages.
+    /// Returns -1 when the codec cannot count terms without a full scan.
+    /// </summary>
+    public long DistinctArticleCount
+    {
+        get
+        {
+            var terms = MultiFields.GetTerms(_reader, LexicalIndex.KeyField);
+            return terms?.Count ?? -1;
+        }
+    }
+
     public List<LexicalHit> Search(
         string query,
         int k,

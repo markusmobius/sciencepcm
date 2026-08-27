@@ -72,8 +72,9 @@ public sealed class LiteratureTools(RetrievalService retrieval)
         "abstracts on methods questions (0.932 vs 0.247 nDCG@10; 89% vs 21% useful results). " +
         "Each hit is a ~300 word fragment with title, authors, journal, publication date/year, " +
         "DOI, PMID, PMCID, section and retraction status, so it can be quoted and attributed. " +
-        "IMPORTANT: full text covers only about 23% of the corpus, so absence here does not " +
-        "mean absence from the literature. Fall back to search_literature to identify papers, " +
+        "IMPORTANT: most papers in this corpus have NO full text, and full text is 2019-2025 " +
+        "only, so absence here does not mean absence from the literature. Call corpus_stats for " +
+        "the measured coverage. Fall back to search_literature to identify papers, " +
         "but do not present an abstract as evidence for methodological details it does not state. " +
         "Retracted papers ARE included and flagged is_retracted; say so if you cite one. " +
         "As with search_literature, candidates are found lexically, so re-query with the " +
@@ -209,6 +210,13 @@ public sealed class LiteratureTools(RetrievalService retrieval)
         "conclusions from an absence of results.")]
     public string CorpusStats()
     {
+        // Measured from the passage index rather than remembered: distinct article keys,
+        // not passage count, is how many papers actually have full text.
+        var fullTextPapers = retrieval.FullTextArticleCount;
+        var coverage = fullTextPapers > 0 && retrieval.DocumentCount > 0
+            ? $"{100.0 * fullTextPapers / retrieval.DocumentCount:F1}% of indexed papers have full text"
+            : "unknown";
+
         return JsonSerializer.Serialize(new
         {
             abstracts = new
@@ -221,8 +229,9 @@ public sealed class LiteratureTools(RetrievalService retrieval)
                 ? new
                 {
                     passages = retrieval.PassageCount,
+                    papers = fullTextPapers,
                     use_for = "methods and depth - what a study did and found",
-                    coverage = "about 23% of the corpus has full text",
+                    coverage,
                     sources = "PubMed Central, bioRxiv, medRxiv, 2019-2025",
                     methods_benchmark = new
                     {
@@ -235,7 +244,7 @@ public sealed class LiteratureTools(RetrievalService retrieval)
                 }
                 : null,
             source = "OpenAlex, filtered to any topic in field 28 (neuroscience)",
-            retrieval = "BM25 (Lucene EnglishAnalyzer) then MedCPT cross-encoder reranking",
+            retrieval = "BM25 (Lucene EnglishAnalyzer) then BGE-reranker-v2-m3 cross-encoder reranking",
             metadata = new
             {
                 abstracts = "DOI, PMID, PMCID, publication date, journal, citations, language, type and open-access links",
