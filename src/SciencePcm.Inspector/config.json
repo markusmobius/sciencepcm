@@ -16,11 +16,22 @@
       }
     },
     {
-      "name": "EconMCP",
+      "name": "newalexmcp",
+      "url": "https://www.openalexmcp.econlabs.org/mcp",
+      "toolOrder": [ "search_openalex", "get_openalex_work", "openalex_corpus_stats" ],
+      "suggestions": {
+        "search_openalex": {
+          "query": "Papers by Matthias Sutter on risk preferences"
+        }
+      }
+    },
+    {
+      "name": "oldalexmcp",
       "url": "https://www.academic.econlabs.org/mcp",
+      "toolOrder": [ "search_works" ],
       "suggestions": {
         "search_works": {
-          "query": "Papers by Brendan Lucier in AER"
+          "query": "Papers by Matthias Sutter on risk preferences"
         }
       }
     }
