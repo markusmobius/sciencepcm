@@ -70,15 +70,43 @@ stays at 100.
 ## Upgrading a v2 deployment to v3
 
 The schema, the corpus filter and the reranker all changed, so nothing is reusable.
-Run the full sequence:
+v3 also roughly doubles the corpus — 484,677,603 works against v2's 256,108,425, because
+234M title-only works are no longer discarded — so the stale v2 index has to go before
+the rebuild, not after.
 
 1. On nerds21, re-ingest and overwrite the cloud path: `.\tools\openalex-sync.ps1 -Force`.
-2. On the A100, discard the old digest, index and reranker so `prepare` rebuilds them:
-   `rm -rf ~/openalex-data/abstracts ~/openalex-data/index ~/openalex-data/models/openalex-cross`.
+2. On the A100, stop the server, then clear both disks at once:
+
+   ```bash
+   bash tools/openalex-a100.sh clean          # lists what it would remove
+   bash tools/openalex-a100.sh clean --yes    # actually removes it
+   ```
+
+   That drops the digest, the index on *both* the managed disk and `/datadisk`, the
+   retired MiniLM reranker and any half-finished pull.
 3. `bash tools/openalex-a100.sh prepare`, then restart the server.
 
-The index grows: v3 keeps works v2 dropped, and `work_type` is now an indexed term
-rather than a stored-only field.
+## Disk layout
+
+`prepare` splits the two artifacts across the two disks deliberately:
+
+| artifact | location | why |
+| --- | --- | --- |
+| Parquet digest (134 GB) | `~/openalex-data/abstracts` (managed disk) | read once, sequentially, during the build |
+| Lucene index (~400-450 GB) | `/datadisk/openalex-data/index` (NVMe) | random reads and segment merges need the IOPS |
+| durable index copy | `~/openalex-data/index` (managed disk) | `/datadisk` is wiped on deallocate |
+
+The index is built on NVMe and then rsynced to the durable copy, so both locations end
+up populated in one pass. `datadisk-restore.service` syncs the durable copy back after a
+deallocation, which costs minutes against hours to rebuild.
+
+Both bottlenecks are real and independent: moving the index to NVMe took a short query
+from 6.65s to 1.24s, while a long natural-language query was unaffected at 5.66s until
+parallel segment search took it to 0.44s. Neither fix substitutes for the other, and the
+NVMe argument strengthens as the index grows past the box's 216 GB of RAM.
+
+Set `OPENALEX_FAST_ROOT` to override `/datadisk`. If it is missing or not writable the
+script serves from the managed disk and says so.
 
 ## 1. nerds21
 
