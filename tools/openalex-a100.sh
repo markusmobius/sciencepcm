@@ -177,13 +177,15 @@ serve() {
         --index "$INDEX" \
         --cross-encoder "$MODEL" \
         --gpu \
-        --urls http://0.0.0.0:8081
+        --urls http://0.0.0.0:8081 \
+        "$@"
 }
 
 case "$COMMAND" in
     check) check ;;
     clean) clean "${2:-}" ;;
     prepare) prepare ;;
-    serve) serve ;;
-    *) echo "Usage: $0 [check|clean [--yes]|prepare|serve]" >&2; exit 2 ;;
+    # Anything after 'serve' goes to the server, e.g. serve --max-doc-freq-ratio 0.01
+    serve) shift; serve "$@" ;;
+    *) echo "Usage: $0 [check|clean [--yes]|prepare|serve [server args...]]" >&2; exit 2 ;;
 esac
