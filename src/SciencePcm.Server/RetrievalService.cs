@@ -14,7 +14,6 @@ public sealed record ServerOptions
     public int MaxTokens { get; init; } = 512;
     public int Threads { get; init; } = 8;
     public bool ParallelSearch { get; init; } = true;
-    public double MaxDocFreqRatio { get; init; }
 
     /// <summary>
     /// Work types dropped before ranking. OpenAlex records peer reviews, datasets and
@@ -29,9 +28,6 @@ public sealed record ServerOptions
     /// commentaries that share its title. 0 disables the prior.
     /// </summary>
     public double CitationPriorWeight { get; init; }
-
-    /// <summary>BM25 length normalisation. Lower values penalise long documents less.</summary>
-    public float Bm25B { get; init; } = 0.75f;
     public bool UseGpu { get; init; }
     public long GpuMemoryLimitBytes { get; init; }
 }
@@ -69,12 +65,10 @@ public sealed class RetrievalService : IDisposable
     {
         _options = options;
         _lexical = new LexicalSearcher(
-            options.IndexPath, 4, options.ParallelSearch, options.MaxDocFreqRatio,
-            options.CitationPriorWeight, options.Bm25B);
+            options.IndexPath, 4, options.ParallelSearch, options.CitationPriorWeight);
         _passages = string.IsNullOrWhiteSpace(options.PassageIndexPath)
             ? null
-            : new LexicalSearcher(
-                options.PassageIndexPath, 4, options.ParallelSearch, options.MaxDocFreqRatio);
+            : new LexicalSearcher(options.PassageIndexPath, 4, options.ParallelSearch);
 
         _session = TextEmbedder.CreateSession(
             options.CrossEncoderPath,
@@ -103,20 +97,29 @@ public sealed class RetrievalService : IDisposable
         int k,
         int? yearMin = null,
         int? yearMax = null,
-        bool rerank = true)
+        bool rerank = true,
+        string? author = null,
+        string? journal = null,
+        SortOrder sort = SortOrder.Relevance)
     {
         var candidates = _lexical.SearchArticles(
             query,
             rerank ? Math.Max(k, _options.RerankCandidates) : k,
             yearMin,
             yearMax,
-            _options.ExcludeWorkTypes);
+            _options.ExcludeWorkTypes,
+            author,
+            journal,
+            sort);
 
         if (candidates.Count == 0) return [];
 
-        if (!rerank)
+        // A browse - every paper by one author, newest first - has no relevance signal to
+        // rerank on, and reordering it would defeat the sort the caller asked for.
+        if (!rerank || sort != SortOrder.Relevance || string.IsNullOrWhiteSpace(query))
         {
-            return Deduplicate(candidates.Select(c => ToResult(c, c.Score, "bm25"))).Take(k).ToList();
+            var stage = sort == SortOrder.Relevance ? "bm25" : $"sorted:{sort}".ToLowerInvariant();
+            return Deduplicate(candidates.Select(c => ToResult(c, c.Score, stage))).Take(k).ToList();
         }
 
         var scores = Rerank(query, candidates);

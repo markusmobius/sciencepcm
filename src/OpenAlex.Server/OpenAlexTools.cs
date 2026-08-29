@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Text.Json;
 using ModelContextProtocol.Server;
+using SciencePcm.Lexical;
 using SciencePcm.Server;
 
 namespace OpenAlex.Server;
@@ -14,22 +15,44 @@ public sealed class OpenAlexTools(RetrievalService retrieval)
     [Description(
         "Find papers across the unfiltered OpenAlex works snapshot. The query may be a research " +
         "question, a claim or passage from a newspaper article, or remembered bibliographic clues. " +
-        "Titles, abstracts, authors, institutions, journals, DOI, ISSN, topics and keywords are " +
-        "searched before a cross-encoder reranks candidates. Retry with names or alternate terms " +
-        "when recall matters. Only works for which OpenAlex supplies an abstract are included.")]
+        "Title, abstract, authors, institutions, journal, identifiers and topics are separate " +
+        "indexed fields, matched together and weighted, before a cross-encoder reranks candidates. " +
+        "Set author or journal to restrict rather than merely favour: author expects the OpenAlex " +
+        "form 'Surname, Given' and matches exactly, so use it to list a researcher's papers. " +
+        "With author or journal set, query may be omitted, and sort=citations or sort=year is " +
+        "usually what you want, since relevance means little when browsing. " +
+        "Works without abstracts are included and are about a fifth of recent articles.")]
     public string SearchOpenAlex(
-        [Description("A question, news passage, claim, title fragment, author, institution, journal or identifier.")] string query,
+        [Description("A question, news passage, claim, title fragment, institution or identifier. Optional when author or journal is set.")] string? query = null,
         [Description("How many works to return. Default 10, maximum 50.")] int limit = 10,
+        [Description("Exact author, as OpenAlex writes it, for example 'Duflo, Esther'.")] string? author = null,
+        [Description("Exact journal name, for example 'The Lancet'.")] string? journal = null,
+        [Description("Order: relevance (default), citations, or year.")] string? sort = null,
         [Description("Only include works published in or after this year.")] int? yearMin = null,
         [Description("Only include works published in or before this year.")] int? yearMax = null,
         [Description("Skip cross-encoder reranking. Faster but less relevant.")] bool fast = false)
     {
-        if (string.IsNullOrWhiteSpace(query)) return "{\"error\": \"query must not be empty\"}";
+        var hasFilter = !string.IsNullOrWhiteSpace(author) || !string.IsNullOrWhiteSpace(journal);
+        if (string.IsNullOrWhiteSpace(query) && !hasFilter)
+        {
+            return "{\"error\": \"pass query, or author, or journal\"}";
+        }
 
-        var results = retrieval.Search(query, Math.Clamp(limit, 1, 50), yearMin, yearMax, rerank: !fast);
+        if (!TryParseSort(sort, out var order))
+        {
+            return "{\"error\": \"sort must be relevance, citations or year\"}";
+        }
+
+        var results = retrieval.Search(
+            query ?? "", Math.Clamp(limit, 1, 50), yearMin, yearMax, rerank: !fast,
+            author: author, journal: journal, sort: order);
+
         return JsonSerializer.Serialize(new
         {
             query,
+            author,
+            journal,
+            sort = order.ToString().ToLowerInvariant(),
             returned = results.Count,
             results = results.Select(result => new
             {
@@ -51,6 +74,20 @@ public sealed class OpenAlexTools(RetrievalService retrieval)
                 abstract_excerpt = Excerpt(result.Text, 500),
             }),
         }, Json);
+    }
+
+    private static bool TryParseSort(string? value, out SortOrder order)
+    {
+        order = SortOrder.Relevance;
+        if (string.IsNullOrWhiteSpace(value)) return true;
+
+        switch (value.Trim().ToLowerInvariant())
+        {
+            case "relevance": order = SortOrder.Relevance; return true;
+            case "citations": order = SortOrder.Citations; return true;
+            case "year": order = SortOrder.Year; return true;
+            default: return false;
+        }
     }
 
     [McpServerTool(Name = "get_openalex_work")]

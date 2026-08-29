@@ -63,7 +63,31 @@ public static class LexicalIndex
     public const string OpenAccessField = "open_access";
     public const string SectionField = "section";
     public const string RetractedField = "retracted";
-    public const string SearchField = "body_search";
+
+    // Searchable fields. Each is indexed separately so that BM25 normalises each by its
+    // own average length: a 765-author list can dilute "authors" and nothing else.
+    public const string AuthorExactField = "author_exact";
+    public const string VenueField = "venue";
+    public const string VenueExactField = "venue_exact";
+    public const string IdentifiersField = "identifiers";
+    public const string TopicsSearchField = "topics_search";
+
+    /// <summary>
+    /// Per-field weights for the dismax query, the Lucene-4 way of expressing BM25F
+    /// (Robertson, Zaragoza and Taylor, CIKM 2004). Identifiers outrank everything
+    /// because a DOI or PMID in the query is a certainty, not a hint; title outranks the
+    /// abstract because news prose names papers by title.
+    /// </summary>
+    public static readonly (string Field, float Boost)[] SearchFields =
+    [
+        (IdentifiersField, 4.0f),
+        (TitleField, 3.0f),
+        (AuthorsField, 2.0f),
+        (VenueField, 1.5f),
+        (BodyField, 1.0f),
+        (InstitutionsField, 1.0f),
+        (TopicsSearchField, 1.0f),
+    ];
 
     /// <summary>Stemming and stopword removal matter more than exact term matching here.</summary>
     public static Analyzer CreateAnalyzer() => new EnglishAnalyzer(Version);
@@ -74,14 +98,8 @@ public static class LexicalIndex
         {
             new StringField(IdField, source.Id, Field.Store.YES),
             new StringField(KeyField, source.ArticleKey, Field.Store.YES),
-            new StoredField(TitleField, source.Title),
-            new StoredField(BodyField, source.Body),
-            // Bibliographic names are candidate anchors when matching prose that mentions
-            // researchers, institutions or venues but does not quote the abstract.
-            new TextField(
-                SearchField,
-                SearchableText(source),
-                Field.Store.NO),
+            new TextField(TitleField, source.Title, Field.Store.YES),
+            new TextField(BodyField, source.Body, Field.Store.YES),
         };
 
         if (source.Year > 0)
@@ -96,10 +114,29 @@ public static class LexicalIndex
 
         if (source.Metadata is { } metadata)
         {
+            AddSearchable(document, AuthorsField, metadata.Authors);
+            AddSearchable(document, InstitutionsField, metadata.Institutions);
+
+            // One indexed term per name, so "all papers by Duflo, Esther" is an exact
+            // filter rather than two common words matching half the corpus.
+            foreach (var author in SplitNames(metadata.Authors))
+            {
+                document.Add(new StringField(AuthorExactField, author, Field.Store.NO));
+            }
+
+            AddIndexedOnly(document, VenueField, Join(metadata.Journal, metadata.Publisher));
+            if (!string.IsNullOrWhiteSpace(metadata.Journal))
+            {
+                document.Add(new StringField(
+                    VenueExactField, metadata.Journal.Trim().ToLowerInvariant(), Field.Store.NO));
+            }
+
+            AddIndexedOnly(document, IdentifiersField,
+                Join(metadata.Doi, metadata.Pmcid, metadata.Issn, source.Pmid));
+            AddIndexedOnly(document, TopicsSearchField, Join(metadata.Topics, metadata.Keywords));
+
             AddStored(document, PublicationDateField, metadata.PublicationDate);
             AddStored(document, DoiField, metadata.Doi);
-            AddStored(document, AuthorsField, metadata.Authors);
-            AddStored(document, InstitutionsField, metadata.Institutions);
             AddStored(document, JournalField, metadata.Journal);
             AddStored(document, IssnField, metadata.Issn);
             AddStored(document, LanguageField, metadata.Language);
@@ -145,34 +182,26 @@ public static class LexicalIndex
         return document;
     }
 
-    private static string SearchableText(ArticleDocument source)
+    /// <summary>Author lists arrive as "Surname, Given; Surname, Given".</summary>
+    public static IEnumerable<string> SplitNames(string? value) =>
+        string.IsNullOrWhiteSpace(value)
+            ? []
+            : value.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                   .Select(name => name.ToLowerInvariant())
+                   .Where(name => name.Length > 1)
+                   .Distinct();
+
+    private static string Join(params string?[] values) =>
+        string.Join(". ", values.Where(value => !string.IsNullOrWhiteSpace(value)));
+
+    private static void AddSearchable(Document document, string field, string? value)
     {
-        var metadata = source.Metadata;
-        return string.Join(". ", new[]
-        {
-            source.Title,
-            source.Body,
-            // Capped: a 765-author trial paper carries 13,000 characters of names, which
-            // is 80% of its searchable text, and BM25 divides every term's contribution
-            // by document length. Uncapped, collaboration papers sank below the news
-            // pieces and errata written about them. News prose names the first authors.
-            Truncate(metadata?.Authors, 400),
-            Truncate(metadata?.Institutions, 400),
-            metadata?.Journal,
-            metadata?.Doi,
-            metadata?.Pmcid,
-            metadata?.Issn,
-            metadata?.Publisher,
-            metadata?.Topics,
-            metadata?.Keywords,
-        }.Where(value => !string.IsNullOrWhiteSpace(value)));
+        if (!string.IsNullOrEmpty(value)) document.Add(new TextField(field, value, Field.Store.YES));
     }
 
-    private static string? Truncate(string? value, int length)
+    private static void AddIndexedOnly(Document document, string field, string? value)
     {
-        if (string.IsNullOrEmpty(value) || value.Length <= length) return value;
-        var cut = value.LastIndexOf(';', length);
-        return value[..(cut > 0 ? cut : length)];
+        if (!string.IsNullOrEmpty(value)) document.Add(new TextField(field, value, Field.Store.NO));
     }
 
     private static void AddStored(Document document, string field, string value)
@@ -249,6 +278,13 @@ public sealed class CitationBoostQuery(Query subQuery, double weight) : CustomSc
     }
 }
 
+public enum SortOrder
+{
+    Relevance,
+    Citations,
+    Year,
+}
+
 public sealed class LexicalSearcher : IDisposable
 {
     private readonly DirectoryReader _reader;
@@ -256,43 +292,28 @@ public sealed class LexicalSearcher : IDisposable
     private readonly IndexSearcher _searcher;
     private readonly Analyzer _analyzer;
     private readonly int _fetchMultiplier;
-    private readonly double _maxDocFreqRatio;
     private readonly double _citationPriorWeight;
 
     /// <param name="parallel">
     /// Search index segments concurrently. On a 256M document index a long query spends
     /// seconds scoring on one core while the rest of the machine idles.
     /// </param>
-    /// <param name="maxDocFreqRatio">
-    /// Drop query terms appearing in more than this fraction of documents. Words like
-    /// "researchers" or "reported" match tens of millions of documents and contribute
-    /// almost nothing to ranking, but Lucene 4.8 has no BlockMax-WAND so it scores every
-    /// one of them. 0 disables the filter.
-    /// </param>
     public LexicalSearcher(
         string indexPath,
         int fetchMultiplier = 4,
         bool parallel = true,
-        double maxDocFreqRatio = 0,
-        double citationPriorWeight = 0,
-        float bm25B = 0.75f)
+        double citationPriorWeight = 0)
     {
         _directory = FSDirectory.Open(indexPath);
         _reader = DirectoryReader.Open(_directory);
         _analyzer = LexicalIndex.CreateAnalyzer();
         _fetchMultiplier = Math.Max(1, fetchMultiplier);
-        _maxDocFreqRatio = maxDocFreqRatio;
         _citationPriorWeight = citationPriorWeight;
 
         _searcher = parallel
             ? new IndexSearcher(_reader, TaskScheduler.Default)
             : new IndexSearcher(_reader);
-
-        // b controls length normalisation, and is read from the stored norm at query
-        // time, so it is tunable without reindexing. Papers by large collaborations
-        // carry hundreds of author names in the searched field, which the default 0.75
-        // penalises heavily.
-        _searcher.Similarity = new BM25Similarity(1.2f, bm25B);
+        _searcher.Similarity = new BM25Similarity();
     }
 
     public int Count => _reader.NumDocs;
@@ -318,25 +339,40 @@ public sealed class LexicalSearcher : IDisposable
         int? yearMax = null,
         string? section = null,
         bool includeRetracted = true,
-        IReadOnlyCollection<string>? excludeWorkTypes = null)
+        IReadOnlyCollection<string>? excludeWorkTypes = null,
+        string? author = null,
+        string? journal = null,
+        SortOrder sort = SortOrder.Relevance)
     {
-        // Built through the analyzer rather than a query parser, so that punctuation in a
-        // natural-language question cannot throw a syntax error.
-        var builder = new QueryBuilder(_analyzer);
-        var parsed = builder.CreateBooleanQuery(LexicalIndex.SearchField, query, Occur.SHOULD);
-        if (parsed is null) return [];
+        var parsed = BuildFieldedQuery(query);
 
-        parsed = TrimCommonTerms(parsed);
-        if (parsed is null) return [];
+        var hasText = parsed is not null;
+        var hasAuthor = !string.IsNullOrWhiteSpace(author);
+        var hasJournal = !string.IsNullOrWhiteSpace(journal);
+        if (!hasText && !hasAuthor && !hasJournal) return [];
 
-        Query effective = parsed;
+        Query effective = parsed ?? new MatchAllDocsQuery();
         var needsFilter = yearMin is not null || yearMax is not null
             || !string.IsNullOrWhiteSpace(section) || !includeRetracted
-            || excludeWorkTypes is { Count: > 0 };
+            || excludeWorkTypes is { Count: > 0 } || hasAuthor || hasJournal;
 
         if (needsFilter)
         {
-            var combined = new BooleanQuery { { parsed, Occur.MUST } };
+            var combined = new BooleanQuery { { effective, Occur.MUST } };
+
+            if (hasAuthor)
+            {
+                combined.Add(
+                    new TermQuery(new Term(LexicalIndex.AuthorExactField, author!.Trim().ToLowerInvariant())),
+                    Occur.MUST);
+            }
+
+            if (hasJournal)
+            {
+                combined.Add(
+                    new TermQuery(new Term(LexicalIndex.VenueExactField, journal!.Trim().ToLowerInvariant())),
+                    Occur.MUST);
+            }
 
             if (yearMin is not null || yearMax is not null)
             {
@@ -371,12 +407,24 @@ public sealed class LexicalSearcher : IDisposable
             effective = combined;
         }
 
-        if (_citationPriorWeight > 0)
+        if (_citationPriorWeight > 0 && sort == SortOrder.Relevance)
         {
             effective = new CitationBoostQuery(effective, _citationPriorWeight);
         }
 
-        var top = _searcher.Search(effective, k);
+        // doDocScores keeps a real relevance score on each hit when a sort replaces
+        // score ordering; without it Lucene leaves them NaN.
+        var top = sort switch
+        {
+            SortOrder.Citations => _searcher.Search(effective, null, k,
+                new Sort(new SortField(LexicalIndex.CitedByCountField, SortFieldType.INT32, true)),
+                true, false),
+            SortOrder.Year => _searcher.Search(effective, null, k,
+                new Sort(new SortField(LexicalIndex.YearField, SortFieldType.INT32, true)),
+                true, false),
+            _ => _searcher.Search(effective, k),
+        };
+
         var hits = new List<LexicalHit>(top.ScoreDocs.Length);
 
         foreach (var scoreDoc in top.ScoreDocs)
@@ -388,30 +436,49 @@ public sealed class LexicalSearcher : IDisposable
     }
 
     /// <summary>
-    /// Removes terms so common that scoring them costs far more than they inform. Keeps
-    /// everything if that would leave nothing to search on - a query made entirely of
-    /// common words still has to return something.
+    /// One dismax per query term across the searchable fields, which is how Lucene 4
+    /// expresses BM25F. Per-term rather than per-field: a query naming an author and a
+    /// topic has to score both, and whole-query dismax would take the best single field
+    /// and discard the rest.
     /// </summary>
-    private BooleanQuery? TrimCommonTerms(Query query)
+    private Query? BuildFieldedQuery(string query)
     {
-        if (_maxDocFreqRatio <= 0 || query is not BooleanQuery boolean) return query as BooleanQuery;
+        if (string.IsNullOrWhiteSpace(query)) return null;
 
-        var ceiling = (int)(_reader.NumDocs * _maxDocFreqRatio);
-        var kept = new BooleanQuery();
-        var dropped = 0;
+        // Through the analyzer rather than a query parser, so punctuation in a
+        // natural-language question cannot throw a syntax error. All fields share the
+        // analyzer, so one pass gives the terms for every field.
+        var builder = new QueryBuilder(_analyzer);
+        var analyzed = builder.CreateBooleanQuery(LexicalIndex.TitleField, query, Occur.SHOULD);
 
-        foreach (var clause in boolean.Clauses)
+        var terms = analyzed switch
         {
-            if (clause.Query is TermQuery term && _reader.DocFreq(term.Term) > ceiling)
+            BooleanQuery boolean => boolean.Clauses
+                .Select(clause => clause.Query)
+                .OfType<TermQuery>()
+                .Select(term => term.Term.Text)
+                .ToList(),
+            TermQuery single => [single.Term.Text],
+            _ => [],
+        };
+
+        if (terms.Count == 0) return null;
+
+        var combined = new BooleanQuery();
+
+        foreach (var text in terms)
+        {
+            // 0.1 keeps a little credit for the other fields that matched, the standard
+            // dismax tie-breaker.
+            var dismax = new DisjunctionMaxQuery(0.1f);
+            foreach (var (field, boost) in LexicalIndex.SearchFields)
             {
-                dropped++;
-                continue;
+                dismax.Add(new TermQuery(new Term(field, text)) { Boost = boost });
             }
-            kept.Add(clause);
+            combined.Add(dismax, Occur.SHOULD);
         }
 
-        if (kept.Clauses.Count == 0) return boolean;
-        return dropped == 0 ? boolean : kept;
+        return combined;
     }
 
     private static LexicalHit ToHit(Document document, float score)
@@ -463,10 +530,14 @@ public sealed class LexicalSearcher : IDisposable
         int k,
         int? yearMin = null,
         int? yearMax = null,
-        IReadOnlyCollection<string>? excludeWorkTypes = null)
+        IReadOnlyCollection<string>? excludeWorkTypes = null,
+        string? author = null,
+        string? journal = null,
+        SortOrder sort = SortOrder.Relevance)
     {
         var passages = Search(
-            query, k * _fetchMultiplier, yearMin, yearMax, excludeWorkTypes: excludeWorkTypes);
+            query, k * _fetchMultiplier, yearMin, yearMax, excludeWorkTypes: excludeWorkTypes,
+            author: author, journal: journal, sort: sort);
         var best = new Dictionary<string, LexicalHit>(passages.Count);
 
         foreach (var hit in passages)
@@ -504,11 +575,10 @@ public sealed class LexicalSearcher : IDisposable
         var top = _searcher.Search(new TermQuery(new Term(LexicalIndex.IdField, id)), 1);
         if (top.ScoreDocs.Length == 0) return $"'{id}' is not in this index.";
 
-        var builder = new QueryBuilder(_analyzer);
-        var parsed = builder.CreateBooleanQuery(LexicalIndex.SearchField, query, Occur.SHOULD);
+        var parsed = BuildFieldedQuery(query);
         if (parsed is null) return "Query produced no terms.";
 
-        Query effective = TrimCommonTerms(parsed) ?? parsed;
+        Query effective = parsed;
         if (_citationPriorWeight > 0)
         {
             effective = new CitationBoostQuery(effective, _citationPriorWeight);
@@ -517,20 +587,20 @@ public sealed class LexicalSearcher : IDisposable
         return _searcher.Explain(effective, top.ScoreDocs[0].Doc).ToString();
     }
 
-    /// <summary>Analyzed terms of a query, with how many documents each matches.</summary>
-    public IEnumerable<(string Term, int DocFreq, bool Kept)> QueryTerms(string query)
+    /// <summary>Analyzed query terms, with their document frequency in each field.</summary>
+    public IEnumerable<(string Term, string Field, int DocFreq)> QueryTerms(string query)
     {
         var builder = new QueryBuilder(_analyzer);
-        if (builder.CreateBooleanQuery(LexicalIndex.SearchField, query, Occur.SHOULD)
+        if (builder.CreateBooleanQuery(LexicalIndex.TitleField, query, Occur.SHOULD)
             is not BooleanQuery parsed) yield break;
-
-        var ceiling = _maxDocFreqRatio > 0 ? (int)(_reader.NumDocs * _maxDocFreqRatio) : int.MaxValue;
 
         foreach (var clause in parsed.Clauses)
         {
             if (clause.Query is not TermQuery term) continue;
-            var frequency = _reader.DocFreq(term.Term);
-            yield return (term.Term.Text, frequency, frequency <= ceiling);
+            foreach (var (field, _) in LexicalIndex.SearchFields)
+            {
+                yield return (term.Term.Text, field, _reader.DocFreq(new Term(field, term.Term.Text)));
+            }
         }
     }
 

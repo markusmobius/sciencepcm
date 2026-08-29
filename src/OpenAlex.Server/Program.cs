@@ -29,11 +29,9 @@ var options = new ServerOptions
     RerankBatch = builder.Configuration.GetValue("rerank-batch", 32),
     Threads = builder.Configuration.GetValue("threads", 8),
     ParallelSearch = builder.Configuration.GetValue("parallel-search", true),
-    MaxDocFreqRatio = builder.Configuration.GetValue("max-doc-freq-ratio", 0.0),
     ExcludeWorkTypes = (builder.Configuration["exclude-types"] ?? "peer-review,dataset,paratext")
         .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
     CitationPriorWeight = builder.Configuration.GetValue("citation-prior", 1.0),
-    Bm25B = builder.Configuration.GetValue("bm25-b", 0.75f),
     UseGpu = builder.Configuration.GetValue("gpu", false),
     GpuMemoryLimitBytes = builder.Configuration.GetValue<long>("gpu-mem-limit-gb", 0) * 1024L * 1024 * 1024,
 };
@@ -90,7 +88,6 @@ Console.WriteLine($"cross-encoder  : {options.CrossEncoderPath} (gpu={options.Us
 Console.WriteLine($"rerank depth   : {options.RerankCandidates}");
 Console.WriteLine($"excluded types : {(options.ExcludeWorkTypes.Count == 0 ? "none" : string.Join(", ", options.ExcludeWorkTypes))}");
 Console.WriteLine($"citation prior : {options.CitationPriorWeight:0.##} (BM25 x up to {1 + options.CitationPriorWeight:0.##})");
-Console.WriteLine($"bm25 b         : {options.Bm25B:0.##} (length normalisation)");
 Console.WriteLine($"auth           : {(string.IsNullOrEmpty(token) ? "OPEN - no OPENALEX_TOKEN set" : "bearer token required")}");
 Console.WriteLine("mcp endpoint   : /mcp");
 

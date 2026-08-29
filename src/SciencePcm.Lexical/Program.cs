@@ -91,10 +91,9 @@ public static class Program
 
         await foreach (var record in ParquetTextSource.ReadArticlesAsync(options.Input, options.Schema, options.Metadata))
         {
-            // Indexing title-only records tripled the corpus and dropped the average
-            // field length to ~97 tokens, which made BM25's length penalty roughly three
-            // times harsher for every real paper. They were added to recover landmark
-            // papers that turned out to have abstracts all along.
+            // 21% of recent articles and 29% of well-cited 2025 articles have no
+            // abstract in OpenAlex, so --require-body discards real papers. It exists
+            // only to measure the corpus both ways.
             var unusable = options.RequireBody
                 ? string.IsNullOrWhiteSpace(record.Body)
                 : string.IsNullOrWhiteSpace(record.Body) && string.IsNullOrWhiteSpace(record.Title);
@@ -137,16 +136,16 @@ public static class Program
     private static int ExplainCommand(ExplainOptions options)
     {
         using var searcher = new LexicalSearcher(
-            options.IndexPath, 4, parallel: false, options.MaxDocFreqRatio,
-            options.CitationPrior, options.Bm25B);
+            options.IndexPath, 4, parallel: false, options.CitationPrior);
 
         Console.WriteLine($"index     : {options.IndexPath}");
         Console.WriteLine($"documents : {searcher.Count:N0}");
         Console.WriteLine();
-        Console.WriteLine("query terms (docFreq, and whether --max-doc-freq-ratio keeps them):");
-        foreach (var (term, frequency, kept) in searcher.QueryTerms(options.Query))
+        Console.WriteLine("query terms, and how many documents match in each field:");
+        foreach (var (term, field, frequency) in searcher.QueryTerms(options.Query))
         {
-            Console.WriteLine($"  {(kept ? " " : "x")} {term,-24} {frequency,12:N0}");
+            if (frequency == 0) continue;
+            Console.WriteLine($"  {term,-24} {field,-14} {frequency,12:N0}");
         }
 
         Console.WriteLine();
@@ -164,10 +163,13 @@ public static class Program
         if (options.QueriesPath is null)
         {
             var stopwatch = Stopwatch.StartNew();
-            var hits = searcher.SearchArticles(options.Query!, options.K);
+            var hits = searcher.SearchArticles(
+                options.Query ?? "", options.K,
+                author: options.Author, journal: options.Journal, sort: options.Sort);
             stopwatch.Stop();
 
-            Console.WriteLine($"\"{options.Query}\"  ({stopwatch.Elapsed.TotalMilliseconds:N1} ms)");
+            Console.WriteLine($"\"{options.Query}\" author={options.Author} journal={options.Journal} "
+                + $"sort={options.Sort}  ({stopwatch.Elapsed.TotalMilliseconds:N1} ms)");
             Console.WriteLine();
 
             var rank = 1;
@@ -332,6 +334,9 @@ public sealed class SearchOptions
     public string? QueriesPath { get; private set; }
     public string? RunPath { get; private set; }
     public int K { get; private set; } = 100;
+    public string? Author { get; private set; }
+    public string? Journal { get; private set; }
+    public SortOrder Sort { get; private set; } = SortOrder.Relevance;
     public int FetchMultiplier { get; private set; } = 4;
     public int Threads { get; private set; } = 8;
     public int? Limit { get; private set; }
@@ -349,6 +354,17 @@ public sealed class SearchOptions
                 case "--query": options.Query = Next(); break;
                 case "--queries": options.QueriesPath = Next(); break;
                 case "--run": options.RunPath = Next(); break;
+                case "--author": options.Author = Next(); break;
+                case "--journal": options.Journal = Next(); break;
+                case "--sort":
+                    options.Sort = Next().ToLowerInvariant() switch
+                    {
+                        "citations" => SortOrder.Citations,
+                        "year" => SortOrder.Year,
+                        "relevance" => SortOrder.Relevance,
+                        var other => throw new ArgumentException($"Unknown sort '{other}'."),
+                    };
+                    break;
                 case "--k": options.K = int.Parse(Next()); break;
                 case "--fetch": options.FetchMultiplier = int.Parse(Next()); break;
                 case "--threads": options.Threads = int.Parse(Next()); break;
@@ -358,7 +374,11 @@ public sealed class SearchOptions
         }
 
         if (string.IsNullOrWhiteSpace(options.IndexPath)) throw new ArgumentException("--index is required.");
-        if (options.Query is null && options.QueriesPath is null) throw new ArgumentException("Pass --query or --queries.");
+        if (options.Query is null && options.QueriesPath is null
+            && options.Author is null && options.Journal is null)
+        {
+            throw new ArgumentException("Pass --query, --queries, --author or --journal.");
+        }
         if (options.QueriesPath is not null && options.RunPath is null) throw new ArgumentException("--queries needs --run.");
         return options;
     }
@@ -369,9 +389,7 @@ internal sealed class ExplainOptions
     public string IndexPath { get; private set; } = "";
     public string Query { get; private set; } = "";
     public string Id { get; private set; } = "";
-    public double MaxDocFreqRatio { get; private set; }
     public double CitationPrior { get; private set; }
-    public float Bm25B { get; private set; } = 0.75f;
 
     public static ExplainOptions Parse(string[] args)
     {
@@ -386,9 +404,7 @@ internal sealed class ExplainOptions
                 case "--index": options.IndexPath = Next(); break;
                 case "--query": options.Query = Next(); break;
                 case "--id": options.Id = Next(); break;
-                case "--max-doc-freq-ratio": options.MaxDocFreqRatio = double.Parse(Next()); break;
                 case "--citation-prior": options.CitationPrior = double.Parse(Next()); break;
-                case "--bm25-b": options.Bm25B = float.Parse(Next()); break;
                 default: throw new ArgumentException($"Unknown argument '{args[i]}'.");
             }
         }

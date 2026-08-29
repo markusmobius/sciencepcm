@@ -4,38 +4,77 @@ This is the second MCP service. It shares the tested Lucene and cross-encoder en
 with SciencePCM, but every executable, artifact path, cloud path, token, tool name and
 network endpoint is OpenAlex-specific.
 
-The corpus is every work in the local OpenAlex snapshot that has an abstract. There is
-no neuroscience, year, topic or field filter and no full-text tier.
+The corpus is every work in the local OpenAlex snapshot that has a title or an abstract:
+484,677,603 works, of which 234M have no abstract. There is no neuroscience, year, topic
+or field filter and no full-text tier.
 
-The v3 ingest keeps works that have only a title, and the index build discards them
-again with `--require-body`. That looks redundant and is deliberate: the Parquet digest
-stays a superset so the decision can be revisited without a four-hour re-ingest.
+Abstract-less works are kept because they are mostly real papers, not noise. Measured
+against the OpenAlex API: 21.6% of 2025 articles have no abstract, rising to **29.1% of
+2025 articles with 10 or more citations**, and 44.9% across all articles. The fielded
+index handles them without a special case, so no switch is needed.
 
-Indexing title-only works was a mistake, and the reasoning behind it was wrong twice
-over. It was introduced because landmark papers — the ChAdOx1 Lancet trial, Jinek 2012 —
-were missing from search results, which was attributed to publishers not depositing
-abstracts to OpenAlex. Both papers were in fact present, with abstracts, all along. The
-change tripled the corpus to 485M documents and dropped the average field length to ~97
-tokens, which made BM25's length penalty roughly three times harsher for every real
-paper. See "Why landmark papers were missing" below.
+`OpenAlex.Index build --require-body` excludes them, for measuring the corpus both ways.
+It is not the default.
 
-## Ranking
+Note for anyone re-reading the history here: an earlier version of this file blamed
+missing landmark papers on publishers not depositing abstracts. That was wrong — the
+papers had abstracts throughout. See "Why landmark papers were missing".
 
-Three defaults keep the paper itself above the literature about it:
+## Fields and ranking
 
-- `--exclude-types peer-review,dataset,paratext` drops work types that OpenAlex records
-  as separate works titled after the paper they discuss. Pass an empty value to disable.
+Title, abstract, authors, institutions, venue, identifiers and topics are **separate
+indexed fields**, and a query is one dismax per term across them with per-field boosts —
+the Lucene 4 way of writing BM25F (Robertson, Zaragoza and Taylor, CIKM 2004).
+
+| field | boost | notes |
+| --- | --- | --- |
+| `identifiers` | 4.0 | DOI, PMID, PMCID, ISSN — a match here is a certainty |
+| `title` | 3.0 | news prose names papers by title |
+| `authors` | 2.0 | analysed, for names appearing in prose |
+| `venue` | 1.5 | journal and publisher |
+| `body` | 1.0 | the abstract |
+| `institutions` | 1.0 | "MIT economists ..." |
+| `topics_search` | 1.0 | topics and keywords |
+
+Per-field normalisation is the point. Under the previous single concatenated field, a
+765-author trial paper was 27x the average document length and BM25 scaled every term to
+8.5% of its value — the decisive `chadox1` term, IDF 11.74, contributed 1.0 out of 14.4.
+Now the author list can only dilute `authors`, and title and abstract keep their own
+lengths. On a synthetic index reproducing that case, the target went from rank 2 behind
+a news summary to rank 1 by a factor of 2.4.
+
+It also means abstract-less works need no special handling. They simply have no `body`
+field and compete on the fields they do have, so the corpus can hold both without a
+switch. That matters: 21.6% of 2025 articles have no abstract, rising to 29.1% among
+those with 10 or more citations.
+
+Two ranking defaults on top:
+
+- `--exclude-types peer-review,dataset,paratext` drops work types OpenAlex records as
+  separate works titled after the paper they discuss.
 - `--citation-prior 1.0` multiplies the BM25 score by up to `1 + weight`, scaled by
-  `log10(1 + cited_by_count)`. Multiplicative and capped rather than additive: an
-  additive bonus has to be tuned against BM25's score scale, and at any weight large
-  enough to matter the most-cited papers in the corpus win every query outright. Pass
-  `0` to disable. Measured on the landmark set: MRR 0.125 → 0.333.
-- Results are deduplicated by title to the **best-cited** record, not the first one seen.
-  OpenAlex holds the same paper more than once — a preprint, a stub typed `other`, a
-  merged-but-not-removed record — and the copies carry few or no citations.
+  `log10(1 + cited_by_count)`. Capped and multiplicative, so citations break ties between
+  topically similar documents but never promote an irrelevant one. Disabled when a
+  non-relevance sort is requested.
 
-`--max-doc-freq-ratio` and `--bm25-b` exist and are off by default. Both were tried
-against the landmark set and neither improved it; they are kept as diagnostics.
+Results are deduplicated by title to the **best-cited** record: OpenAlex holds the same
+paper more than once, and the copies carry few or no citations.
+
+`--max-doc-freq-ratio` and `--bm25-b` have been removed. Both existed only to compensate
+for the concatenated field.
+
+## Filters
+
+`search_openalex` takes `author`, `journal` and `sort` alongside `query`:
+
+- `author` matches the OpenAlex form exactly — `"Duflo, Esther"` — against one indexed
+  term per name, so it lists a researcher's papers rather than matching two common words.
+- `journal` matches an exact venue name.
+- `sort` is `relevance` (default), `citations` or `year`.
+- `query` is optional when `author` or `journal` is set, which is how you browse.
+
+Reranking is skipped for a non-relevance sort: a browse has no relevance signal to rerank
+on, and reordering would defeat the sort that was asked for.
 
 ## Why landmark papers were missing
 
@@ -60,6 +99,12 @@ with short author lists ranked first.
 Author and institution lists are now capped at 400 characters each in the indexed text,
 which takes that document from ~2,621 tokens to ~300. News prose names lead authors, so
 the cap keeps the useful part.
+
+The false trail is worth recording. The paper was first reported absent from the digest
+by a `WHERE lower(title) LIKE '%...%' LIMIT 10` query — ten arbitrary rows out of
+thousands of matches, which returned only reviews and commentaries. A truncated,
+unordered query cannot prove absence. Everything downstream of that reading, including
+the decision to index title-only works, was aimed at a problem that did not exist.
 
 
 
