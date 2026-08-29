@@ -84,6 +84,10 @@ def main() -> int:
     parser.add_argument("--token", default=os.environ.get("OPENALEX_TOKEN")
                         or os.environ.get("SCIENCEPCM_TOKEN"))
     parser.add_argument("--fast", action="store_true", help="Skip reranking, to isolate BM25.")
+    parser.add_argument("--stages", action="store_true",
+                        help="Run each query twice, with and without reranking, and show both "
+                             "ranks. A paper BM25 finds but reranking loses needs a different fix "
+                             "from one BM25 never retrieves.")
     parser.add_argument("--timeout", type=int, default=300)
     parser.add_argument("--out", type=Path, help="Optional JSONL of the full results per query.")
     args = parser.parse_args()
@@ -107,9 +111,15 @@ def main() -> int:
         rank = rank_of(results, question["expect_doi"])
         ranks.append(rank)
 
+        bm25_rank = None
+        if args.stages:
+            bm25 = session.call_tool(args.tool, {**arguments, "fast": True})
+            bm25_rank = rank_of(bm25.get("results", []), question["expect_doi"])
+
         top = results[0]["title"][:60] if results else "(nothing returned)"
-        print(f"{question['query_id']}  rank={rank if rank else '-':>3}  returned={len(results):>2}"
-              f"  top: {top}")
+        stage_note = f"  bm25={bm25_rank if bm25_rank else '-':>3}" if args.stages else ""
+        print(f"{question['query_id']}  rank={rank if rank else '-':>3}{stage_note}"
+              f"  returned={len(results):>2}  top: {top}")
 
         present = None
         if rank is None and question.get("expect_openalex_id"):
@@ -125,7 +135,7 @@ def main() -> int:
         elif rank is not None:
             indexed += 1
 
-        records.append({**question, "rank": rank, "lookup": present,
+        records.append({**question, "rank": rank, "bm25_rank": bm25_rank, "lookup": present,
                         "results": [{"doi": hit.get("doi"), "title": hit.get("title"),
                                      "score": hit.get("score")} for hit in results]})
 
