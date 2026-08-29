@@ -33,7 +33,7 @@ EnvironmentFile=-/etc/sciencepcm.env
 # bash -lc, not ExecStart directly: env.sh exports the CUDA 12 and cuDNN 9 library
 # paths ONNX Runtime needs, and it is a shell script rather than a systemd-style
 # KEY=VALUE EnvironmentFile.
-ExecStart=/bin/bash -lc 'source /home/mobius/sciencepcm-data/env.sh && exec dotnet run --project src/SciencePcm.Server -c Release -p:UseGpu=true --no-build -- --index /datadisk/sciencepcm-data/index/abstracts-bm25 --passage-index /datadisk/sciencepcm-data/index/passages-bm25 --cross-encoder /home/mobius/sciencepcm-data/models/bge-reranker --gpu --urls http://0.0.0.0:8080'
+ExecStart=/bin/bash -lc 'source /home/mobius/sciencepcm-data/env.sh && exec dotnet run --project src/SciencePcm.Server -c Release -p:UseGpu=true -- --index /datadisk/sciencepcm-data/index/abstracts-bm25 --passage-index /datadisk/sciencepcm-data/index/passages-bm25 --cross-encoder /home/mobius/sciencepcm-data/models/bge-reranker --gpu --urls http://0.0.0.0:8080'
 
 Restart=on-failure
 RestartSec=10

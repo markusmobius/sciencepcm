@@ -308,7 +308,7 @@ mismatched ones.
 Pairs are assembled in C#, so verify that too before serving:
 
 ```bash
-dotnet run --project src/SciencePcm.Embed -c Release --no-build -- \
+  dotnet run --project src/SciencePcm.Embed -c Release -- \
   --model ~/sciencepcm-data/models/bge-reranker \
   --verify-pairs ~/sciencepcm-data/models/bge-reranker/tokenizer-parity.json
 ```

@@ -295,7 +295,7 @@ parity="$MODELS/medcpt-article/tokenizer-parity.json"
 if [[ $CHECK_ONLY -eq 1 || $SKIP_BUILD -eq 1 ]]; then
     warn "skipped"
 elif [[ -f "$parity" ]]; then
-    ( cd "$REPO" && dotnet run --project src/SciencePcm.Embed -c Release -p:UseGpu=true --no-build -- \
+    ( cd "$REPO" && dotnet run --project src/SciencePcm.Embed -c Release -p:UseGpu=true -- \
         --model "$MODELS/medcpt-article" --verify-tokenizer "$parity" )
 else
     warn "no parity file at $parity"
@@ -329,7 +329,7 @@ build_index() {
     fi
 
     info "$(printf '%-22s' "$name") building ..."
-    ( cd "$REPO" && dotnet run --project src/SciencePcm.Lexical -c Release --no-build -- build \
+    ( cd "$REPO" && dotnet run --project src/SciencePcm.Lexical -c Release -- build \
         --input "$glob" "${metadata_args[@]}" --schema "$schema" --out "$out" \
         --threads "$(nproc)" --ram-buffer 2048 )
 }

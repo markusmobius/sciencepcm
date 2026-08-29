@@ -167,7 +167,7 @@ else {
         )
 
         Write-Host "  running ingest ($YearMin-$YearMax) ..."
-        & dotnet run --project (Join-Path $repo 'src\SciencePcm.Ingest') -c Release --no-build -- @arguments
+        & dotnet run --project (Join-Path $repo 'src\SciencePcm.Ingest') -c Release -- @arguments
         Assert-LastExit 'ingest'
     }
     finally {

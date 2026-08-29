@@ -173,7 +173,7 @@ serve() {
     has_index || { echo "run prepare first" >&2; exit 1; }
     [[ -f "$MODEL/model.onnx" && -f "$MODEL/tokenizer.onnx" ]] || { echo "run prepare first" >&2; exit 1; }
     exec dotnet run --project "$REPO/src/OpenAlex.Server" -c Release \
-        -p:UseGpu=true --no-build -- \
+        -p:UseGpu=true -- \
         --index "$INDEX" \
         --cross-encoder "$MODEL" \
         --gpu \
