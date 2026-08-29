@@ -88,6 +88,9 @@ def main() -> int:
                         help="Run each query twice, with and without reranking, and show both "
                              "ranks. A paper BM25 finds but reranking loses needs a different fix "
                              "from one BM25 never retrieves.")
+    parser.add_argument("--show", type=int, default=0,
+                        help="On a miss, print this many top hits with type and citations, to see "
+                             "what is outranking the target.")
     parser.add_argument("--timeout", type=int, default=300)
     parser.add_argument("--out", type=Path, help="Optional JSONL of the full results per query.")
     args = parser.parse_args()
@@ -122,7 +125,9 @@ def main() -> int:
               f"  returned={len(results):>2}  top: {top}")
 
         present = None
-        if rank is None and question.get("expect_openalex_id"):
+        if rank is not None:
+            indexed += 1
+        elif question.get("expect_openalex_id"):
             present = lookup(session, args.lookup_tool, lookup_arg, question["expect_openalex_id"])
             if present and not present.get("error"):
                 indexed += 1
@@ -132,11 +137,17 @@ def main() -> int:
                       f"type={present.get('type')}  cited={present.get('cited_by_count')}")
             else:
                 print(f"       NOT IN INDEX: {question['expect_openalex_id']}")
-        elif rank is not None:
-            indexed += 1
+
+        if rank is None and args.show:
+            for position, hit in enumerate(results[:args.show], start=1):
+                print(f"       {position:>2}. [{hit.get('type') or '?':<12}] "
+                      f"cited={hit.get('cited_by_count') or 0:<6} "
+                      f"{(hit.get('title') or '')[:56]}")
 
         records.append({**question, "rank": rank, "bm25_rank": bm25_rank, "lookup": present,
                         "results": [{"doi": hit.get("doi"), "title": hit.get("title"),
+                                     "type": hit.get("type"),
+                                     "cited_by_count": hit.get("cited_by_count"),
                                      "score": hit.get("score")} for hit in results]})
 
     total = len(ranks)
