@@ -38,7 +38,7 @@ public sealed class OpenAlexTools(RetrievalService retrieval)
             return "{\"error\": \"pass query, or author, or journal\"}";
         }
 
-        if (!TryParseSort(sort, out var order))
+        if (!SortOrders.TryParse(sort, out var order))
         {
             return "{\"error\": \"sort must be relevance, citations or year\"}";
         }
@@ -76,19 +76,8 @@ public sealed class OpenAlexTools(RetrievalService retrieval)
         }, Json);
     }
 
-    private static bool TryParseSort(string? value, out SortOrder order)
-    {
-        order = SortOrder.Relevance;
-        if (string.IsNullOrWhiteSpace(value)) return true;
-
-        switch (value.Trim().ToLowerInvariant())
-        {
-            case "relevance": order = SortOrder.Relevance; return true;
-            case "citations": order = SortOrder.Citations; return true;
-            case "year": order = SortOrder.Year; return true;
-            default: return false;
-        }
-    }
+    private static bool TryParseSort(string? value, out SortOrder order) =>
+        SortOrders.TryParse(value, out order);
 
     [McpServerTool(Name = "get_openalex_work")]
     [Description("Retrieve the complete abstract for one work returned by search_openalex.")]

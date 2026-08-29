@@ -332,13 +332,13 @@ screen -S mcp
 source ~/sciencepcm-data/env.sh
 cd ~/sciencepcm
 
-dotnet run --project src/SciencePcm.Server -c Release -p:UseGpu=true -- \
-  --index ~/sciencepcm-data/index/abstracts-bm25 \
-  --passage-index ~/sciencepcm-data/index/passages-bm25 \
-  --cross-encoder ~/sciencepcm-data/models/bge-reranker \
-  --gpu \
-  --urls http://0.0.0.0:8080
+bash tools/sciencemcp-a100.sh serve
 ```
+
+The script owns the index, passage-index, reranker and port, and prefers the `/datadisk`
+copy when it is present. `mcp-server.service` runs the same script, so the unit and this
+runbook cannot drift apart. `bash tools/sciencemcp-a100.sh check` reports the paths,
+sizes and index schema version without starting anything.
 
 `Ctrl+A` `D` to detach. Confirm with:
 

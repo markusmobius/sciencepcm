@@ -4,6 +4,23 @@ using SciencePcm.Lexical;
 
 namespace SciencePcm.Server;
 
+public static class SortOrders
+{
+    public static bool TryParse(string? value, out SortOrder order)
+    {
+        order = SortOrder.Relevance;
+        if (string.IsNullOrWhiteSpace(value)) return true;
+
+        switch (value.Trim().ToLowerInvariant())
+        {
+            case "relevance": order = SortOrder.Relevance; return true;
+            case "citations": order = SortOrder.Citations; return true;
+            case "year": order = SortOrder.Year; return true;
+            default: return false;
+        }
+    }
+}
+
 public sealed record ServerOptions
 {
     public required string IndexPath { get; init; }

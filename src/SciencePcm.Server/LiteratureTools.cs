@@ -24,24 +24,42 @@ public sealed class LiteratureTools(RetrievalService retrieval)
         "Candidates are found lexically before being reranked, so a paper that uses different " +
         "terminology to your question may not be found at all: if results look thin or you " +
         "suspect other wording exists (a gene symbol vs its full name, 'chromosome' vs " +
-        "'genetics'), CALL THIS AGAIN with the alternative terms and merge what you get.")]
+        "'genetics'), CALL THIS AGAIN with the alternative terms and merge what you get. " +
+        "Set author or journal to restrict rather than merely favour: author expects the form " +
+        "'Surname, Given' and matches exactly, so use it to list a researcher's papers. With " +
+        "author or journal set, query may be omitted, and sort=citations or sort=year is " +
+        "usually what you want, since relevance means little when browsing.")]
     public string SearchLiterature(
-        [Description("The research question, in natural language.")] string query,
+        [Description("The research question, in natural language. Optional when author or journal is set.")] string? query = null,
         [Description("How many papers to return. Default 10, maximum 50.")] int limit = 10,
+        [Description("Exact author, for example 'Doudna, Jennifer'.")] string? author = null,
+        [Description("Exact journal name, for example 'Nature Neuroscience'.")] string? journal = null,
+        [Description("Order: relevance (default), citations, or year.")] string? sort = null,
         [Description("Only include papers published in or after this year.")] int? yearMin = null,
         [Description("Only include papers published in or before this year.")] int? yearMax = null,
         [Description("Skip reranking. Faster, noticeably less relevant. Default false.")] bool fast = false)
     {
-        if (string.IsNullOrWhiteSpace(query))
+        var hasFilter = !string.IsNullOrWhiteSpace(author) || !string.IsNullOrWhiteSpace(journal);
+        if (string.IsNullOrWhiteSpace(query) && !hasFilter)
         {
-            return "{\"error\": \"query must not be empty\"}";
+            return "{\"error\": \"pass query, or author, or journal\"}";
         }
 
-        var results = retrieval.Search(query, Math.Clamp(limit, 1, 50), yearMin, yearMax, rerank: !fast);
+        if (!SortOrders.TryParse(sort, out var order))
+        {
+            return "{\"error\": \"sort must be relevance, citations or year\"}";
+        }
+
+        var results = retrieval.Search(
+            query ?? "", Math.Clamp(limit, 1, 50), yearMin, yearMax, rerank: !fast,
+            author: author, journal: journal, sort: order);
 
         return JsonSerializer.Serialize(new
         {
             query,
+            author,
+            journal,
+            sort = order.ToString().ToLowerInvariant(),
             returned = results.Count,
             results = results.Select(r => new
             {
