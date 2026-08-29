@@ -271,19 +271,45 @@ public sealed class RetrievalService : IDisposable
     /// </summary>
     private static IEnumerable<SearchResult> Deduplicate(IEnumerable<SearchResult> results)
     {
+        var ordered = results as IList<SearchResult> ?? results.ToList();
+
+        // OpenAlex holds the same paper under the same title more than once - a preprint,
+        // a stub typed "other", a merged-but-not-removed record - and the copies carry
+        // few or no citations. Keeping whichever copy scored highest silently discarded
+        // the canonical record, so pick the best of each title group by citations and
+        // give it the group's best position.
+        var best = new Dictionary<string, SearchResult>(StringComparer.OrdinalIgnoreCase);
+        foreach (var result in ordered)
+        {
+            var key = TitleKey(result);
+            if (key.Length == 0) continue;
+            if (!best.TryGetValue(key, out var incumbent) || Citations(result) > Citations(incumbent))
+            {
+                best[key] = result;
+            }
+        }
+
         var seenTitles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var seenKeys = new HashSet<string>(StringComparer.Ordinal);
 
-        foreach (var result in results)
+        foreach (var result in ordered)
         {
-            if (!seenKeys.Add(result.ArticleKey)) continue;
+            var key = TitleKey(result);
+            if (key.Length == 0)
+            {
+                if (seenKeys.Add(result.ArticleKey)) yield return result;
+                continue;
+            }
 
-            var title = result.Title.Trim().TrimEnd('.');
-            if (title.Length > 0 && !seenTitles.Add(title)) continue;
-
-            yield return result;
+            if (!seenTitles.Add(key)) continue;
+            var winner = best[key];
+            if (seenKeys.Add(winner.ArticleKey)) yield return winner;
         }
     }
+
+    private static string TitleKey(SearchResult result) => result.Title.Trim().TrimEnd('.');
+
+    private static int Citations(SearchResult result) => result.Metadata?.CitedByCount ?? 0;
 
     public void Dispose()
     {
