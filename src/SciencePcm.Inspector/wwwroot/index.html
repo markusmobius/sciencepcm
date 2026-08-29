@@ -82,6 +82,13 @@
       <input id="query" size="58" placeholder="What is the role of microglia in synaptic pruning?">
       <input id="k" type="number" value="10" min="1" max="50" style="min-width:80px">
       <input id="section" size="14" placeholder="section" title="Methods, Results, Discussion ... full text only">
+      <input id="author" size="18" placeholder="author" title="Exact, as the source writes it: Surname, Given">
+      <input id="journal" size="16" placeholder="journal" title="Exact journal name">
+      <select id="sort" style="min-width:110px" title="Ordering">
+        <option value="">relevance</option>
+        <option value="citations">citations</option>
+        <option value="year">year</option>
+      </select>
       <label style="margin:0"><input type="checkbox" id="fast" style="min-width:auto"> fast (no rerank)</label>
       <button id="search" disabled>Search</button>
     </div>
@@ -301,6 +308,9 @@ function bindQuickSearch(tools) {
       countParam,
       hasFast: 'fast' in properties,
       hasSection: 'section' in properties,
+      hasAuthor: 'author' in properties,
+      hasJournal: 'journal' in properties,
+      hasSort: 'sort' in properties,
     });
   }
 
@@ -338,6 +348,9 @@ function describeQuickTool() {
 
   $('fast').disabled = !candidate.hasFast;
   $('section').disabled = !candidate.hasSection;
+  $('author').disabled = !candidate.hasAuthor;
+  $('journal').disabled = !candidate.hasJournal;
+  $('sort').disabled = !candidate.hasSort;
 
   // Suggestions are per tool, so switching tier offers a question that tier can answer.
   const suggestion = serverConfig()?.suggestions?.[candidate.tool.name];
@@ -349,7 +362,10 @@ function describeQuickTool() {
   $('quickHint').textContent =
     `calls ${candidate.tool.name}(${candidate.queryParam}` +
     `${candidate.countParam ? ', ' + candidate.countParam : ''}` +
-    `${candidate.hasSection ? ', section' : ''})`;
+    `${candidate.hasSection ? ', section' : ''}` +
+    `${candidate.hasAuthor ? ', author' : ''}` +
+    `${candidate.hasJournal ? ', journal' : ''}` +
+    `${candidate.hasSort ? ', sort' : ''})`;
 }
 
 function renderTools(tools) {
@@ -455,10 +471,15 @@ $('search').onclick = async () => {
   $('search').disabled = true;
   $('results').innerHTML = '<div class="hint">searching...</div>';
   try {
-    const args = { [candidate.queryParam]: $('query').value };
+    const args = {};
+    // query is optional once a filter is set, which is how a browse is expressed.
+    if ($('query').value.trim()) args[candidate.queryParam] = $('query').value.trim();
     if (candidate.countParam) args[candidate.countParam] = Number($('k').value);
     if (candidate.hasFast) args.fast = $('fast').checked;
     if (candidate.hasSection && $('section').value.trim()) args.section = $('section').value.trim();
+    if (candidate.hasAuthor && $('author').value.trim()) args.author = $('author').value.trim();
+    if (candidate.hasJournal && $('journal').value.trim()) args.journal = $('journal').value.trim();
+    if (candidate.hasSort && $('sort').value) args.sort = $('sort').value;
 
     const response = await callTool(candidate.tool.name, args);
     renderResults(response);
