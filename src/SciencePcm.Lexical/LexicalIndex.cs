@@ -34,6 +34,15 @@ public static class LexicalIndex
 {
     public const LuceneVersion Version = LuceneVersion.LUCENE_48;
 
+    /// <summary>
+    /// Bump when the field layout changes. An index built under an older number cannot
+    /// answer the current queries, so the builder rebuilds instead of silently serving
+    /// an index whose fields no longer exist.
+    /// </summary>
+    public const int SchemaVersion = 2;
+
+    public const string StampFile = "index-stamp.json";
+
     public const string IdField = "id";
     public const string KeyField = "key";
     public const string BodyField = "body";

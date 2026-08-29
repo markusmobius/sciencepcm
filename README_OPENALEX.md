@@ -156,22 +156,28 @@ paper is missing from results, look at the first stage.
 | `openalex-a100.sh` | A100 | Pull, prepare, index and serve on port 8081. |
 | `OpenAlex.Server` | A100 | Serve the OpenAlex MCP endpoint. |
 
-## Upgrading a v2 deployment to v3
+## Upgrading, or just re-running
 
-The schema, the corpus filter and the reranker all changed, so the index has to be
-rebuilt. The digest does not: `prepare` pulls it every time and the blob store skips
-files it already has, so a re-run transfers nothing when the digest is unchanged and
-picks up a rebuilt one automatically.
+There is one command, and it is safe to run at any time:
 
-1. On nerds21, re-ingest and overwrite the cloud path: `.\tools\openalex-sync.ps1 -Force`.
-2. On the A100, stop the server, then drop the stale index from both disks:
+```bash
+bash tools/openalex-a100.sh prepare
+```
 
-   ```bash
-   bash tools/openalex-a100.sh clean          # lists what it would remove
-   bash tools/openalex-a100.sh clean --yes    # actually removes it
-   ```
+It is a waterfall, and each stage decides for itself whether there is work to do:
 
-3. `bash tools/openalex-a100.sh prepare`, then `serve` with no extra arguments.
+1. **Digest** — pulled every time. The blob store fingerprints files and transfers only
+   what differs, so an unchanged digest costs nothing and a rebuilt one is picked up
+   automatically.
+2. **Reranker** — exported only when the ONNX files are absent.
+3. **Index** — the builder writes `index-stamp.json` beside the index recording the
+   schema version and a fingerprint of the source shards. If both still match it returns
+   immediately; if the digest changed or the field layout changed, it rebuilds. Bump
+   `LexicalIndex.SchemaVersion` when the fields change and every index invalidates itself.
+4. **Mirror** — rsync to the durable disk, which is a no-op when nothing moved.
+
+So a schema change or a new digest needs no manual cleanup: pull the code and run
+`prepare`. There is no `clean` command, because deciding what is stale is the tool's job.
 
 The digest lives at `~/openalex-data/openalex/abstracts`, which is where the cloud path
 puts it. A deployment that predates this holds it at `~/openalex-data/abstracts`; move it

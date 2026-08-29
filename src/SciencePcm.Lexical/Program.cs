@@ -38,6 +38,16 @@ public static class Program
 
     private static async Task<int> BuildAsync(BuildOptions options)
     {
+        var stampPath = Path.Combine(options.Output, LexicalIndex.StampFile);
+        var expected = IndexStamp.Describe(options.Input, options.Schema, options.RequireBody);
+
+        if (IndexStamp.Read(stampPath) is { } existing && existing == expected)
+        {
+            Console.WriteLine($"index is current ({expected.Documents:N0} source files, "
+                + $"schema v{expected.SchemaVersion}); nothing to do");
+            return 0;
+        }
+
         Console.WriteLine($"input   : {options.Input}");
         Console.WriteLine($"schema  : {options.Schema}");
         if (options.Metadata is not null) Console.WriteLine($"metadata: {options.Metadata}");
@@ -123,6 +133,8 @@ public static class Program
         }
 
         stopwatch.Stop();
+
+        IndexStamp.Write(stampPath, expected);
 
         var bytes = new DirectoryInfo(options.Output).EnumerateFiles("*", SearchOption.AllDirectories).Sum(f => f.Length);
         Console.WriteLine();

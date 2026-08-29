@@ -29,7 +29,7 @@ else
     FAST_AVAILABLE=0
 fi
 
-INDEX_COMPLETE="$INDEX/.openalex-index-complete"
+STAMP="index-stamp.json"
 COMMAND="${1:-prepare}"
 
 has_digest() {
@@ -43,9 +43,7 @@ has_abstracts() {
 }
 
 has_index() {
-    [[ -f "$INDEX_COMPLETE" ]] &&
-        { [[ -f "$INDEX/segments.gen" ]] ||
-            [[ -n "$(find "$INDEX" -maxdepth 1 -name 'segments_*' -print -quit 2>/dev/null)" ]]; }
+    [[ -f "$INDEX/$STAMP" ]]
 }
 
 free_gb() {
@@ -78,32 +76,6 @@ check() {
     }
 }
 
-# Removes the index on both disks. The digest is never touched: prepare re-pulls it and
-# the blob store skips what is already there, so deleting it only buys a 134 GB download.
-clean() {
-    local targets=("$DATA_ROOT/index" "$FAST_ROOT/openalex-data/index" "$RETIRED_MODEL")
-
-    echo "would remove:"
-    for target in "${targets[@]}"; do
-        [[ -e "$target" ]] && echo "  $target [$(size_of "$target")]"
-    done
-    echo "keeping the digest at $ABSTRACTS"
-
-    if [[ "${1:-}" != "--yes" ]]; then
-        echo
-        echo "nothing removed. Re-run with: $0 clean --yes"
-        return 0
-    fi
-
-    for target in "${targets[@]}"; do
-        [[ -e "$target" ]] || continue
-        echo "removing $target"
-        rm -rf "$target"
-    done
-
-    echo "cleaned. $(free_gb "$DATA_ROOT") GB free on $DATA_ROOT$( (( FAST_AVAILABLE )) && echo ", $(free_gb "$FAST_ROOT") GB free on $FAST_ROOT")"
-}
-
 prepare() {
     check
     mkdir -p "$DATA_ROOT" "$DATA_ROOT/models" "$DATA_ROOT/index"
@@ -133,24 +105,14 @@ prepare() {
     dotnet build "$REPO/src/OpenAlex.Server/OpenAlex.Server.csproj" \
         -c Release -p:UseGpu=true --nologo
 
-    if ! has_index; then
-        local available
-        available="$(free_gb "$(dirname "$(dirname "$INDEX")")" 2>/dev/null || echo 0)"
-        if (( available < 500 )); then
-            echo "WARNING: only ${available} GB free where the index will be built."
-            echo "         v3 indexes ~485M works; budget 400-450 GB plus merge headroom."
-            echo "         Run '$0 clean --yes' to drop the stale v2 index first."
-        fi
-
-        rm -rf "$INDEX"
-        mkdir -p "$INDEX"
-        dotnet run --project "$REPO/src/OpenAlex.Index" -c Release -- \
-            build --input "$ABSTRACTS/*.parquet" --schema openalex \
-            --out "$INDEX" --threads 16 --ram-buffer 4096
-        touch "$INDEX_COMPLETE"
-    else
-        echo "OpenAlex Lucene index already present"
-    fi
+    # The builder compares a stamp of the source files and schema version against the
+    # one beside the index, and returns immediately when they match. Rebuilding is its
+    # decision, not ours, so prepare is safe to run whenever.
+    rm -rf "$RETIRED_MODEL"
+    mkdir -p "$INDEX"
+    dotnet run --project "$REPO/src/OpenAlex.Index" -c Release -- \
+        build --input "$ABSTRACTS/*.parquet" --schema openalex \
+        --out "$INDEX" --threads 16 --ram-buffer 4096
 
     # /datadisk is wiped when the VM deallocates, so the NVMe copy is only ever a working
     # copy. datadisk-restore.service syncs this durable one back at boot.
@@ -178,9 +140,8 @@ serve() {
 
 case "$COMMAND" in
     check) check ;;
-    clean) clean "${2:-}" ;;
     prepare) prepare ;;
     # Anything after 'serve' goes to the server, e.g. serve --citation-prior 2.0
     serve) shift; serve "$@" ;;
-    *) echo "Usage: $0 [check|clean [--yes]|prepare|serve [server args...]]" >&2; exit 2 ;;
+    *) echo "Usage: $0 [check|prepare|serve [server args...]]" >&2; exit 2 ;;
 esac
