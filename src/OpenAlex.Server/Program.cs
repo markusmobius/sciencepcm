@@ -88,7 +88,7 @@ Console.WriteLine($"abstract index : {options.IndexPath} ({warmup.DocumentCount:
 Console.WriteLine($"cross-encoder  : {options.CrossEncoderPath} (gpu={options.UseGpu})");
 Console.WriteLine($"rerank depth   : {options.RerankCandidates}");
 Console.WriteLine($"excluded types : {(options.ExcludeWorkTypes.Count == 0 ? "none" : string.Join(", ", options.ExcludeWorkTypes))}");
-Console.WriteLine($"citation prior : {options.CitationPriorWeight:0.##} x log10(1 + citations)");
+Console.WriteLine($"citation prior : {options.CitationPriorWeight:0.##} (BM25 x up to {1 + options.CitationPriorWeight:0.##})");
 Console.WriteLine($"auth           : {(string.IsNullOrEmpty(token) ? "OPEN - no OPENALEX_TOKEN set" : "bearer token required")}");
 Console.WriteLine("mcp endpoint   : /mcp");
 

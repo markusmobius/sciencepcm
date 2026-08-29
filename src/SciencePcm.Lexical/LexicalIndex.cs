@@ -189,17 +189,24 @@ public sealed record ArticleDocument(
     BibliographicMetadata? Metadata = null);
 
 /// <summary>
-/// Adds log10(1 + citations) to the BM25 score, inside the first stage.
+/// Tilts the BM25 score towards well-cited work, by a bounded multiplicative factor.
 /// </summary>
 /// <remarks>
-/// News prose names a paper, but the corpus also holds the reviews, errata, conference
-/// abstracts and replication datasets that quote its title, and those are shorter, so
-/// BM25 prefers them. Citations separate the two populations by orders of magnitude.
-/// The reranker cannot fix this on its own: it only ever sees the candidates BM25
-/// returns, and the paper was not among them.
+/// News prose names a paper, but the corpus also holds the reviews, errata, preprints
+/// and duplicate records that quote its title, and those are shorter, so BM25 prefers
+/// them. Citations separate the two populations by orders of magnitude.
+///
+/// Multiplicative and capped rather than additive: an additive bonus has to be tuned
+/// against BM25's score scale, and at any weight large enough to matter it lets the
+/// most-cited papers in the corpus win every query outright. Scaling by at most
+/// (1 + weight) means citations break ties between topically similar documents but can
+/// never promote an irrelevant one.
 /// </remarks>
 public sealed class CitationBoostQuery(Query subQuery, double weight) : CustomScoreQuery(subQuery)
 {
+    // log10 of the most-cited work in OpenAlex, near enough: ~180k citations.
+    private const double Ceiling = 5.5;
+
     private readonly double _weight = weight;
 
     public override string Name => "citationBoost";
@@ -220,9 +227,10 @@ public sealed class CitationBoostQuery(Query subQuery, double weight) : CustomSc
         public override float CustomScore(int doc, float subQueryScore, float valSrcScore)
         {
             var citations = _citations.Get(doc);
-            return citations <= 0
-                ? subQueryScore
-                : (float)(subQueryScore + weight * Math.Log10(1 + citations));
+            if (citations <= 0) return subQueryScore;
+
+            var share = Math.Min(1.0, Math.Log10(1 + citations) / Ceiling);
+            return (float)(subQueryScore * (1 + weight * share));
         }
 
         public override float CustomScore(int doc, float subQueryScore, float[] valSrcScores) =>
