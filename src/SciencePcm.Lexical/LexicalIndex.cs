@@ -263,7 +263,8 @@ public sealed class LexicalSearcher : IDisposable
         int fetchMultiplier = 4,
         bool parallel = true,
         double maxDocFreqRatio = 0,
-        double citationPriorWeight = 0)
+        double citationPriorWeight = 0,
+        float bm25B = 0.75f)
     {
         _directory = FSDirectory.Open(indexPath);
         _reader = DirectoryReader.Open(_directory);
@@ -275,7 +276,12 @@ public sealed class LexicalSearcher : IDisposable
         _searcher = parallel
             ? new IndexSearcher(_reader, TaskScheduler.Default)
             : new IndexSearcher(_reader);
-        _searcher.Similarity = new BM25Similarity();
+
+        // b controls length normalisation, and is read from the stored norm at query
+        // time, so it is tunable without reindexing. Papers by large collaborations
+        // carry hundreds of author names in the searched field, which the default 0.75
+        // penalises heavily.
+        _searcher.Similarity = new BM25Similarity(1.2f, bm25B);
     }
 
     public int Count => _reader.NumDocs;

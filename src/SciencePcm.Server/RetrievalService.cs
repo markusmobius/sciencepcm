@@ -29,6 +29,9 @@ public sealed record ServerOptions
     /// commentaries that share its title. 0 disables the prior.
     /// </summary>
     public double CitationPriorWeight { get; init; }
+
+    /// <summary>BM25 length normalisation. Lower values penalise long documents less.</summary>
+    public float Bm25B { get; init; } = 0.75f;
     public bool UseGpu { get; init; }
     public long GpuMemoryLimitBytes { get; init; }
 }
@@ -67,7 +70,7 @@ public sealed class RetrievalService : IDisposable
         _options = options;
         _lexical = new LexicalSearcher(
             options.IndexPath, 4, options.ParallelSearch, options.MaxDocFreqRatio,
-            options.CitationPriorWeight);
+            options.CitationPriorWeight, options.Bm25B);
         _passages = string.IsNullOrWhiteSpace(options.PassageIndexPath)
             ? null
             : new LexicalSearcher(
