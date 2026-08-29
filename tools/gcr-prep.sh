@@ -30,7 +30,7 @@ FORCE_PULL=0
 SKIP_MODELS=0
 SKIP_BUILD=0
 SKIP_INDEX=0
-FORCE_INDEX=0
+FORCE_MODELS=0
 WITH_MEDCPT=0
 
 while [[ $# -gt 0 ]]; do
@@ -41,7 +41,7 @@ while [[ $# -gt 0 ]]; do
         --skip-models) SKIP_MODELS=1 ;;
         --skip-build)  SKIP_BUILD=1 ;;
         --skip-index)  SKIP_INDEX=1 ;;
-        --force-index) FORCE_INDEX=1 ;;
+        --force-index) echo "--force-index is gone; the index rebuilds itself when the stamp changes" >&2 ;;
         --with-medcpt) WITH_MEDCPT=1 ;;
         -h|--help)     sed -n '2,15p' "${BASH_SOURCE[0]}"; exit 0 ;;
         *)             echo "Unknown argument: $1" >&2; exit 1 ;;
@@ -315,10 +315,6 @@ build_index() {
         metadata_args=(--metadata "$metadata")
     fi
 
-    if [[ -f "$out/segments.gen" || -n "$(ls -A "$out" 2>/dev/null)" ]] && [[ $FORCE_INDEX -eq 0 ]]; then
-        info "$(printf '%-22s' "$name") already built ($(du -sh "$out" 2>/dev/null | cut -f1))"
-        return
-    fi
     if [[ $SKIP_INDEX -eq 1 || $SKIP_BUILD -eq 1 ]]; then
         warn "$(printf '%-22s' "$name") skipped"
         return
@@ -328,7 +324,9 @@ build_index() {
         return
     fi
 
-    info "$(printf '%-22s' "$name") building ..."
+    # No "already built" guard here: the builder compares index-stamp.json against the
+    # source shards and the schema version, and returns in seconds when they match.
+    info "$(printf '%-22s' "$name") checking ..."
     ( cd "$REPO" && dotnet run --project src/SciencePcm.Lexical -c Release -- build \
         --input "$glob" "${metadata_args[@]}" --schema "$schema" --out "$out" \
         --threads "$(nproc)" --ram-buffer 2048 )

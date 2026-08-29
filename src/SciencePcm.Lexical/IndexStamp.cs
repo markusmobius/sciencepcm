@@ -20,12 +20,15 @@ public sealed record IndexStamp(
     long Bytes,
     string SourceFingerprint)
 {
-    public static IndexStamp Describe(string glob, CorpusSchema schema, bool requireBody)
+    public static IndexStamp Describe(
+        string glob, string? metadataGlob, CorpusSchema schema, bool requireBody)
     {
-        var files = ParquetTextSource.ExpandGlob(glob)
+        var files = new[] { glob, metadataGlob }
+            .Where(pattern => !string.IsNullOrWhiteSpace(pattern))
+            .SelectMany(pattern => ParquetTextSource.ExpandGlob(pattern!))
             .Select(path => new FileInfo(path))
             .Where(file => file.Exists)
-            .OrderBy(file => file.Name, StringComparer.Ordinal)
+            .OrderBy(file => file.FullName, StringComparer.Ordinal)
             .ToList();
 
         var builder = new StringBuilder();

@@ -39,7 +39,8 @@ public static class Program
     private static async Task<int> BuildAsync(BuildOptions options)
     {
         var stampPath = Path.Combine(options.Output, LexicalIndex.StampFile);
-        var expected = IndexStamp.Describe(options.Input, options.Schema, options.RequireBody);
+        var expected = IndexStamp.Describe(
+            options.Input, options.Metadata, options.Schema, options.RequireBody);
 
         if (IndexStamp.Read(stampPath) is { } existing && existing == expected)
         {
