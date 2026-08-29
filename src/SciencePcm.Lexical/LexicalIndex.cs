@@ -210,11 +210,12 @@ public sealed class CitationBoostQuery(Query subQuery, double weight) : CustomSc
     private sealed class Provider(AtomicReaderContext context, double weight)
         : CustomScoreProvider(context)
     {
-        // Works with no recorded citations read as 0, so the prior only ever adds. Some
-        // papers exist in OpenAlex as duplicate records with the citations split between
-        // them, and demoting those would be worse than leaving them alone.
+        // Int32Field is trie-encoded, so the parser has to be named explicitly: the
+        // parserless overload reads zero for every document and the boost silently
+        // does nothing.
         private readonly FieldCache.Int32s _citations = FieldCache.DEFAULT.GetInt32s(
-            context.AtomicReader, LexicalIndex.CitedByCountField, true);
+            context.AtomicReader, LexicalIndex.CitedByCountField,
+            FieldCache.NUMERIC_UTILS_INT32_PARSER, true);
 
         public override float CustomScore(int doc, float subQueryScore, float valSrcScore)
         {
