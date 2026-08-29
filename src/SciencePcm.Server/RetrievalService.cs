@@ -66,7 +66,8 @@ public sealed class RetrievalService : IDisposable
     {
         _options = options;
         _lexical = new LexicalSearcher(
-            options.IndexPath, 4, options.ParallelSearch, options.MaxDocFreqRatio);
+            options.IndexPath, 4, options.ParallelSearch, options.MaxDocFreqRatio,
+            options.CitationPriorWeight);
         _passages = string.IsNullOrWhiteSpace(options.PassageIndexPath)
             ? null
             : new LexicalSearcher(

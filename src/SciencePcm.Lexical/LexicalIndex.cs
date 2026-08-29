@@ -2,6 +2,7 @@ using Lucene.Net.Analysis;
 using Lucene.Net.Analysis.En;
 using Lucene.Net.Documents;
 using Lucene.Net.Index;
+using Lucene.Net.Queries;
 using Lucene.Net.Search;
 using Lucene.Net.Search.Similarities;
 using Lucene.Net.Store;
@@ -187,6 +188,47 @@ public sealed record ArticleDocument(
     bool IsRetracted,
     BibliographicMetadata? Metadata = null);
 
+/// <summary>
+/// Adds log10(1 + citations) to the BM25 score, inside the first stage.
+/// </summary>
+/// <remarks>
+/// News prose names a paper, but the corpus also holds the reviews, errata, conference
+/// abstracts and replication datasets that quote its title, and those are shorter, so
+/// BM25 prefers them. Citations separate the two populations by orders of magnitude.
+/// The reranker cannot fix this on its own: it only ever sees the candidates BM25
+/// returns, and the paper was not among them.
+/// </remarks>
+public sealed class CitationBoostQuery(Query subQuery, double weight) : CustomScoreQuery(subQuery)
+{
+    private readonly double _weight = weight;
+
+    public override string Name => "citationBoost";
+
+    protected override CustomScoreProvider GetCustomScoreProvider(AtomicReaderContext context) =>
+        new Provider(context, _weight);
+
+    private sealed class Provider(AtomicReaderContext context, double weight)
+        : CustomScoreProvider(context)
+    {
+        // Works with no recorded citations read as 0, so the prior only ever adds. Some
+        // papers exist in OpenAlex as duplicate records with the citations split between
+        // them, and demoting those would be worse than leaving them alone.
+        private readonly FieldCache.Int32s _citations = FieldCache.DEFAULT.GetInt32s(
+            context.AtomicReader, LexicalIndex.CitedByCountField, true);
+
+        public override float CustomScore(int doc, float subQueryScore, float valSrcScore)
+        {
+            var citations = _citations.Get(doc);
+            return citations <= 0
+                ? subQueryScore
+                : (float)(subQueryScore + weight * Math.Log10(1 + citations));
+        }
+
+        public override float CustomScore(int doc, float subQueryScore, float[] valSrcScores) =>
+            CustomScore(doc, subQueryScore, 0f);
+    }
+}
+
 public sealed class LexicalSearcher : IDisposable
 {
     private readonly DirectoryReader _reader;
@@ -195,6 +237,7 @@ public sealed class LexicalSearcher : IDisposable
     private readonly Analyzer _analyzer;
     private readonly int _fetchMultiplier;
     private readonly double _maxDocFreqRatio;
+    private readonly double _citationPriorWeight;
 
     /// <param name="parallel">
     /// Search index segments concurrently. On a 256M document index a long query spends
@@ -210,13 +253,15 @@ public sealed class LexicalSearcher : IDisposable
         string indexPath,
         int fetchMultiplier = 4,
         bool parallel = true,
-        double maxDocFreqRatio = 0)
+        double maxDocFreqRatio = 0,
+        double citationPriorWeight = 0)
     {
         _directory = FSDirectory.Open(indexPath);
         _reader = DirectoryReader.Open(_directory);
         _analyzer = LexicalIndex.CreateAnalyzer();
         _fetchMultiplier = Math.Max(1, fetchMultiplier);
         _maxDocFreqRatio = maxDocFreqRatio;
+        _citationPriorWeight = citationPriorWeight;
 
         _searcher = parallel
             ? new IndexSearcher(_reader, TaskScheduler.Default)
@@ -298,6 +343,11 @@ public sealed class LexicalSearcher : IDisposable
             }
 
             effective = combined;
+        }
+
+        if (_citationPriorWeight > 0)
+        {
+            effective = new CitationBoostQuery(effective, _citationPriorWeight);
         }
 
         var top = _searcher.Search(effective, k);
