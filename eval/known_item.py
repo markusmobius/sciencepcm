@@ -45,11 +45,23 @@ def rank_of(results: list[dict], expected: str) -> int | None:
     return None
 
 
+def lookup(session: McpSession, tool: str, openalex_id: str) -> dict | None:
+    """Is the work in the index at all? Separates 'we never ingested it' from 'we ranked
+    it badly', which need completely different fixes."""
+    try:
+        record = session.call_tool(tool, {"articleKey": openalex_id})
+    except Exception as error:  # noqa: BLE001
+        return {"error": str(error)[:120]}
+    return None if record.get("error") else record
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--endpoint", required=True)
     parser.add_argument("--questions", type=Path, required=True)
     parser.add_argument("--tool", default="search_openalex")
+    parser.add_argument("--lookup-tool", default="get_openalex_work",
+                        help="Used to check presence when the expected paper is not retrieved.")
     parser.add_argument("--limit", type=int, default=10)
     parser.add_argument("--token", default=os.environ.get("OPENALEX_TOKEN")
                         or os.environ.get("SCIENCEPCM_TOKEN"))
@@ -63,6 +75,7 @@ def main() -> int:
 
     session = McpSession(args.endpoint, args.token, args.timeout)
     ranks: list[int | None] = []
+    indexed = 0
     records = []
 
     for question in questions:
@@ -75,13 +88,25 @@ def main() -> int:
         rank = rank_of(results, question["expect_doi"])
         ranks.append(rank)
 
-        top = results[0]["title"][:64] if results else "(nothing returned)"
+        top = results[0]["title"][:60] if results else "(nothing returned)"
         print(f"{question['query_id']}  rank={rank if rank else '-':>3}  returned={len(results):>2}"
               f"  top: {top}")
-        if rank is None and question.get("note"):
-            print(f"       expected {question['expect_doi']} - {question['note']}")
 
-        records.append({**question, "rank": rank,
+        present = None
+        if rank is None and question.get("expect_openalex_id"):
+            present = lookup(session, args.lookup_tool, question["expect_openalex_id"])
+            if present and not present.get("error"):
+                indexed += 1
+                has_abstract = bool((present.get("abstract") or "").strip())
+                print(f"       IN INDEX but not retrieved: {(present.get('title') or '')[:60]}")
+                print(f"       abstract={'yes' if has_abstract else 'NO'}  "
+                      f"type={present.get('type')}  cited={present.get('cited_by_count')}")
+            else:
+                print(f"       NOT IN INDEX: {question['expect_openalex_id']}")
+        elif rank is not None:
+            indexed += 1
+
+        records.append({**question, "rank": rank, "lookup": present,
                         "results": [{"doi": hit.get("doi"), "title": hit.get("title"),
                                      "score": hit.get("score")} for hit in results]})
 
@@ -91,9 +116,10 @@ def main() -> int:
 
     print()
     print(f"queries : {total}")
+    print(f"indexed : {indexed}/{total}  <- corpus coverage, fix the ingest if low")
     for k in (1, 3, args.limit):
         print(f"hit@{k:<4}: {hits(k)}/{total} ({hits(k) / total:.1%})")
-    print(f"MRR     : {mrr:.3f}")
+    print(f"MRR     : {mrr:.3f}  <- ranking quality, fix retrieval if low while indexed is high")
 
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)
