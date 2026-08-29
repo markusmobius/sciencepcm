@@ -1,0 +1,4 @@
+{"query_id": "S01", "expect_doi": "10.1016/S0140-6736(20)32661-1", "expect_openalex_id": "https://openalex.org/W3111590711", "query_text": "ChAdOx1 nCoV-19 vaccine AZD1222 safety and efficacy"}
+{"query_id": "S02", "expect_doi": "10.1126/science.1225829", "expect_openalex_id": "https://openalex.org/W2045435533", "query_text": "programmable dual-RNA-guided DNA endonuclease adaptive bacterial immunity"}
+{"query_id": "S03", "expect_doi": "10.3847/2041-8213/ab0ec7", "expect_openalex_id": "https://openalex.org/W2936349953", "query_text": "First M87 Event Horizon Telescope Results shadow of the supermassive black hole"}
+{"query_id": "S04", "expect_doi": "10.1056/NEJMoa2032183", "expect_openalex_id": "https://openalex.org/W3127371223", "query_text": "once-weekly semaglutide in adults with overweight or obesity"}
