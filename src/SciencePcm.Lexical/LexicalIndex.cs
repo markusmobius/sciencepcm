@@ -494,6 +494,46 @@ public sealed class LexicalSearcher : IDisposable
         return top.ScoreDocs.Length == 0 ? null : ToHit(_searcher.Doc(top.ScoreDocs[0].Doc), 0f);
     }
 
+    /// <summary>
+    /// Lucene's own account of a score: which clauses matched, their IDF and term
+    /// frequency, and the length norm. The only way to tell "this document scores low"
+    /// apart from "this document never matched" without guessing.
+    /// </summary>
+    public string Explain(string query, string id)
+    {
+        var top = _searcher.Search(new TermQuery(new Term(LexicalIndex.IdField, id)), 1);
+        if (top.ScoreDocs.Length == 0) return $"'{id}' is not in this index.";
+
+        var builder = new QueryBuilder(_analyzer);
+        var parsed = builder.CreateBooleanQuery(LexicalIndex.SearchField, query, Occur.SHOULD);
+        if (parsed is null) return "Query produced no terms.";
+
+        Query effective = TrimCommonTerms(parsed) ?? parsed;
+        if (_citationPriorWeight > 0)
+        {
+            effective = new CitationBoostQuery(effective, _citationPriorWeight);
+        }
+
+        return _searcher.Explain(effective, top.ScoreDocs[0].Doc).ToString();
+    }
+
+    /// <summary>Analyzed terms of a query, with how many documents each matches.</summary>
+    public IEnumerable<(string Term, int DocFreq, bool Kept)> QueryTerms(string query)
+    {
+        var builder = new QueryBuilder(_analyzer);
+        if (builder.CreateBooleanQuery(LexicalIndex.SearchField, query, Occur.SHOULD)
+            is not BooleanQuery parsed) yield break;
+
+        var ceiling = _maxDocFreqRatio > 0 ? (int)(_reader.NumDocs * _maxDocFreqRatio) : int.MaxValue;
+
+        foreach (var clause in parsed.Clauses)
+        {
+            if (clause.Query is not TermQuery term) continue;
+            var frequency = _reader.DocFreq(term.Term);
+            yield return (term.Term.Text, frequency, frequency <= ceiling);
+        }
+    }
+
     public void Dispose()
     {
         _reader.Dispose();

@@ -25,7 +25,8 @@ public static class Program
             {
                 "build" => await BuildAsync(BuildOptions.Parse(args)),
                 "search" => SearchCommand(SearchOptions.Parse(args)),
-                _ => throw new ArgumentException($"Unknown command '{args[0]}'. Use build or search."),
+                "explain" => ExplainCommand(ExplainOptions.Parse(args)),
+                _ => throw new ArgumentException($"Unknown command '{args[0]}'. Use build, search or explain."),
             };
         }
         catch (Exception ex)
@@ -124,6 +125,26 @@ public static class Program
         Console.WriteLine($"Skipped (empty)   : {skipped:N0}");
         Console.WriteLine($"Index size        : {bytes / 1024.0 / 1024 / 1024:N2} GB");
         Console.WriteLine($"Elapsed           : {stopwatch.Elapsed}");
+        return 0;
+    }
+
+    private static int ExplainCommand(ExplainOptions options)
+    {
+        using var searcher = new LexicalSearcher(
+            options.IndexPath, 4, parallel: false, options.MaxDocFreqRatio,
+            options.CitationPrior, options.Bm25B);
+
+        Console.WriteLine($"index     : {options.IndexPath}");
+        Console.WriteLine($"documents : {searcher.Count:N0}");
+        Console.WriteLine();
+        Console.WriteLine("query terms (docFreq, and whether --max-doc-freq-ratio keeps them):");
+        foreach (var (term, frequency, kept) in searcher.QueryTerms(options.Query))
+        {
+            Console.WriteLine($"  {(kept ? " " : "x")} {term,-24} {frequency,12:N0}");
+        }
+
+        Console.WriteLine();
+        Console.WriteLine(searcher.Explain(options.Query, options.Id));
         return 0;
     }
 
@@ -306,7 +327,6 @@ public sealed class SearchOptions
     public int FetchMultiplier { get; private set; } = 4;
     public int Threads { get; private set; } = 8;
     public int? Limit { get; private set; }
-
     public static SearchOptions Parse(string[] args)
     {
         var options = new SearchOptions();
@@ -332,6 +352,42 @@ public sealed class SearchOptions
         if (string.IsNullOrWhiteSpace(options.IndexPath)) throw new ArgumentException("--index is required.");
         if (options.Query is null && options.QueriesPath is null) throw new ArgumentException("Pass --query or --queries.");
         if (options.QueriesPath is not null && options.RunPath is null) throw new ArgumentException("--queries needs --run.");
+        return options;
+    }
+}
+
+internal sealed class ExplainOptions
+{
+    public string IndexPath { get; private set; } = "";
+    public string Query { get; private set; } = "";
+    public string Id { get; private set; } = "";
+    public double MaxDocFreqRatio { get; private set; }
+    public double CitationPrior { get; private set; }
+    public float Bm25B { get; private set; } = 0.75f;
+
+    public static ExplainOptions Parse(string[] args)
+    {
+        var options = new ExplainOptions();
+
+        for (var i = 1; i < args.Length; i++)
+        {
+            string Next() => i + 1 < args.Length ? args[++i] : throw new ArgumentException($"{args[i]} needs a value.");
+
+            switch (args[i])
+            {
+                case "--index": options.IndexPath = Next(); break;
+                case "--query": options.Query = Next(); break;
+                case "--id": options.Id = Next(); break;
+                case "--max-doc-freq-ratio": options.MaxDocFreqRatio = double.Parse(Next()); break;
+                case "--citation-prior": options.CitationPrior = double.Parse(Next()); break;
+                case "--bm25-b": options.Bm25B = float.Parse(Next()); break;
+                default: throw new ArgumentException($"Unknown argument '{args[i]}'.");
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(options.IndexPath)) throw new ArgumentException("--index is required.");
+        if (string.IsNullOrWhiteSpace(options.Query)) throw new ArgumentException("--query is required.");
+        if (string.IsNullOrWhiteSpace(options.Id)) throw new ArgumentException("--id is required.");
         return options;
     }
 }
