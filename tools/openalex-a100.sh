@@ -151,6 +151,7 @@ prepare() {
         mkdir -p "$INDEX"
         dotnet run --project "$REPO/src/OpenAlex.Index" -c Release -- \
             build --input "$ABSTRACTS/*.parquet" --schema openalex \
+            --require-body \
             --out "$INDEX" --threads 16 --ram-buffer 4096
         touch "$INDEX_COMPLETE"
     else

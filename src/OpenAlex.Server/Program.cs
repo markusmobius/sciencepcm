@@ -32,7 +32,7 @@ var options = new ServerOptions
     MaxDocFreqRatio = builder.Configuration.GetValue("max-doc-freq-ratio", 0.0),
     ExcludeWorkTypes = (builder.Configuration["exclude-types"] ?? "peer-review,dataset,paratext")
         .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
-    CitationPriorWeight = builder.Configuration.GetValue("citation-prior", 0.5),
+    CitationPriorWeight = builder.Configuration.GetValue("citation-prior", 1.0),
     Bm25B = builder.Configuration.GetValue("bm25-b", 0.75f),
     UseGpu = builder.Configuration.GetValue("gpu", false),
     GpuMemoryLimitBytes = builder.Configuration.GetValue<long>("gpu-mem-limit-gb", 0) * 1024L * 1024 * 1024,

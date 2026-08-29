@@ -91,9 +91,15 @@ public static class Program
 
         await foreach (var record in ParquetTextSource.ReadArticlesAsync(options.Input, options.Schema, options.Metadata))
         {
-            // Title-only documents are worth indexing: BM25 still matches the title,
-            // authors, institutions and journal that news prose names.
-            if (string.IsNullOrWhiteSpace(record.Body) && string.IsNullOrWhiteSpace(record.Title))
+            // Indexing title-only records tripled the corpus and dropped the average
+            // field length to ~97 tokens, which made BM25's length penalty roughly three
+            // times harsher for every real paper. They were added to recover landmark
+            // papers that turned out to have abstracts all along.
+            var unusable = options.RequireBody
+                ? string.IsNullOrWhiteSpace(record.Body)
+                : string.IsNullOrWhiteSpace(record.Body) && string.IsNullOrWhiteSpace(record.Title);
+
+            if (unusable)
             {
                 skipped++;
                 continue;
@@ -279,6 +285,7 @@ public sealed class BuildOptions
     public int Threads { get; private set; } = 8;
     public double RamBufferMb { get; private set; } = 512;
     public bool Optimize { get; private set; }
+    public bool RequireBody { get; private set; }
     public long? Limit { get; private set; }
 
     public static BuildOptions Parse(string[] args)
@@ -306,6 +313,7 @@ public sealed class BuildOptions
                 case "--threads": options.Threads = int.Parse(Next()); break;
                 case "--ram-buffer": options.RamBufferMb = double.Parse(Next()); break;
                 case "--optimize": options.Optimize = true; break;
+                case "--require-body": options.RequireBody = true; break;
                 case "--limit": options.Limit = long.Parse(Next()); break;
                 default: throw new ArgumentException($"Unknown argument '{args[i]}'.");
             }
