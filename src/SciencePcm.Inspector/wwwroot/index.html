@@ -294,12 +294,15 @@ function bindQuickSearch(tools) {
   for (const tool of tools) {
     if (!/search|find|query/i.test(tool.name)) continue;
     const properties = tool.inputSchema?.properties || {};
+    // A parameter declared optional can come back as a union like ["string","null"],
+    // so match against the set of types rather than a single value.
+    const typesOf = spec => [].concat(spec?.type ?? []);
     const queryParam = Object.keys(properties).find(name =>
-      properties[name].type === 'string' && /query|keyword|search|text|q$/i.test(name));
+      typesOf(properties[name]).includes('string') && /query|keyword|search|text|q$/i.test(name));
     if (!queryParam) continue;
 
     const countParam = Object.keys(properties).find(name =>
-      ['integer', 'number'].includes(properties[name].type) &&
+      typesOf(properties[name]).some(type => ['integer', 'number'].includes(type)) &&
       /^(k|limit|count|top|per_?page|max\w*)$/i.test(name));
 
     quickTools.push({

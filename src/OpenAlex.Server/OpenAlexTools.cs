@@ -23,11 +23,11 @@ public sealed class OpenAlexTools(RetrievalService retrieval)
         "usually what you want, since relevance means little when browsing. " +
         "Works without abstracts are included and are about a fifth of recent articles.")]
     public string SearchOpenAlex(
-        [Description("A question, news passage, claim, title fragment, institution or identifier. Optional when author or journal is set.")] string? query = null,
+        [Description("A question, news passage, claim, title fragment, institution or identifier. Optional when author or journal is set.")] string query = "",
         [Description("How many works to return. Default 10, maximum 50.")] int limit = 10,
-        [Description("Exact author, as OpenAlex writes it, for example 'Duflo, Esther'.")] string? author = null,
-        [Description("Exact journal name, for example 'The Lancet'.")] string? journal = null,
-        [Description("Order: relevance (default), citations, or year.")] string? sort = null,
+        [Description("Exact author, as OpenAlex writes it, for example 'Duflo, Esther'.")] string author = "",
+        [Description("Exact journal name, for example 'The Lancet'.")] string journal = "",
+        [Description("Order: relevance (default), citations, or year.")] string sort = "",
         [Description("Only include works published in or after this year.")] int? yearMin = null,
         [Description("Only include works published in or before this year.")] int? yearMax = null,
         [Description("Skip cross-encoder reranking. Faster but less relevant.")] bool fast = false)
@@ -44,7 +44,7 @@ public sealed class OpenAlexTools(RetrievalService retrieval)
         }
 
         var results = retrieval.Search(
-            query ?? "", Math.Clamp(limit, 1, 50), yearMin, yearMax, rerank: !fast,
+            query, Math.Clamp(limit, 1, 50), yearMin, yearMax, rerank: !fast,
             author: author, journal: journal, sort: order);
 
         return JsonSerializer.Serialize(new

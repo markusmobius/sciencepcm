@@ -30,11 +30,11 @@ public sealed class LiteratureTools(RetrievalService retrieval)
         "author or journal set, query may be omitted, and sort=citations or sort=year is " +
         "usually what you want, since relevance means little when browsing.")]
     public string SearchLiterature(
-        [Description("The research question, in natural language. Optional when author or journal is set.")] string? query = null,
+        [Description("The research question, in natural language. Optional when author or journal is set.")] string query = "",
         [Description("How many papers to return. Default 10, maximum 50.")] int limit = 10,
-        [Description("Exact author, for example 'Doudna, Jennifer'.")] string? author = null,
-        [Description("Exact journal name, for example 'Nature Neuroscience'.")] string? journal = null,
-        [Description("Order: relevance (default), citations, or year.")] string? sort = null,
+        [Description("Exact author, for example 'Doudna, Jennifer'.")] string author = "",
+        [Description("Exact journal name, for example 'Nature Neuroscience'.")] string journal = "",
+        [Description("Order: relevance (default), citations, or year.")] string sort = "",
         [Description("Only include papers published in or after this year.")] int? yearMin = null,
         [Description("Only include papers published in or before this year.")] int? yearMax = null,
         [Description("Skip reranking. Faster, noticeably less relevant. Default false.")] bool fast = false)
@@ -51,7 +51,7 @@ public sealed class LiteratureTools(RetrievalService retrieval)
         }
 
         var results = retrieval.Search(
-            query ?? "", Math.Clamp(limit, 1, 50), yearMin, yearMax, rerank: !fast,
+            query, Math.Clamp(limit, 1, 50), yearMin, yearMax, rerank: !fast,
             author: author, journal: journal, sort: order);
 
         return JsonSerializer.Serialize(new
