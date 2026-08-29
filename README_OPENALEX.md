@@ -158,23 +158,29 @@ paper is missing from results, look at the first stage.
 
 ## Upgrading a v2 deployment to v3
 
-The schema, the corpus filter and the reranker all changed, so nothing is reusable.
-The v3 digest holds 484,677,603 works against v2's 256,108,425, but the index build
-passes `--require-body` and keeps only the ~250M with abstracts.
+The schema, the corpus filter and the reranker all changed, so the index has to be
+rebuilt. The digest does not: `prepare` pulls it every time and the blob store skips
+files it already has, so a re-run transfers nothing when the digest is unchanged and
+picks up a rebuilt one automatically.
 
 1. On nerds21, re-ingest and overwrite the cloud path: `.\tools\openalex-sync.ps1 -Force`.
-2. On the A100, stop the server, then clear both disks at once:
+2. On the A100, stop the server, then drop the stale index from both disks:
 
    ```bash
    bash tools/openalex-a100.sh clean          # lists what it would remove
    bash tools/openalex-a100.sh clean --yes    # actually removes it
    ```
 
-   That drops the digest, the index on *both* the managed disk and `/datadisk`, the
-   retired MiniLM reranker and any half-finished pull.
-3. `bash tools/openalex-a100.sh prepare`, then `serve` with no extra arguments. The
-   defaults are the settled configuration; every flag that was tried and rejected is
-   off unless passed explicitly.
+3. `bash tools/openalex-a100.sh prepare`, then `serve` with no extra arguments.
+
+The digest lives at `~/openalex-data/openalex/abstracts`, which is where the cloud path
+puts it. A deployment that predates this holds it at `~/openalex-data/abstracts`; move it
+rather than re-downloading 134 GB:
+
+```bash
+mkdir -p ~/openalex-data/openalex
+mv ~/openalex-data/abstracts ~/openalex-data/openalex/abstracts
+```
 
 ## Disk layout
 

@@ -11,12 +11,15 @@ LAB_PYTHON="${SCIENCEPCM_DATA_ROOT:-$HOME/sciencepcm-data}/venvs/lab/bin/python"
 # Parquet stays on the managed disk: 134 GB read once, sequentially, during the build,
 # which is the one access pattern a spinning disk handles well. The index goes on NVMe,
 # where Lucene's random reads and segment merges actually need the IOPS.
-ABSTRACTS="$DATA_ROOT/abstracts"
+# Pulled straight into DATA_ROOT, which is where the cloud path lands it. The blob store
+# fingerprints files and skips identical ones, so re-running prepare costs nothing and
+# picks up a rebuilt digest automatically. Downloading to a temp directory and moving it
+# would hide the existing copy and force a full 134 GB transfer every time.
+ABSTRACTS="$DATA_ROOT/openalex/abstracts"
 DURABLE_INDEX="$DATA_ROOT/index/abstracts-bm25"
 FAST_INDEX="$FAST_ROOT/openalex-data/index/abstracts-bm25"
 MODEL="$DATA_ROOT/models/openalex-bge"
 RETIRED_MODEL="$DATA_ROOT/models/openalex-cross"
-PULL_ROOT="$DATA_ROOT/.abstracts-pull"
 
 if [[ -d "$FAST_ROOT" && -w "$FAST_ROOT" ]]; then
     INDEX="$FAST_INDEX"
@@ -75,16 +78,16 @@ check() {
     }
 }
 
-# The v3 digest roughly doubled the corpus, so a v2 index left on either disk is both
-# stale and large enough to starve the rebuild. This clears both locations at once.
+# Removes the index on both disks. The digest is never touched: prepare re-pulls it and
+# the blob store skips what is already there, so deleting it only buys a 134 GB download.
 clean() {
-    local targets=("$ABSTRACTS" "$DATA_ROOT/index" "$FAST_ROOT/openalex-data/index"
-                   "$RETIRED_MODEL" "$PULL_ROOT")
+    local targets=("$DATA_ROOT/index" "$FAST_ROOT/openalex-data/index" "$RETIRED_MODEL")
 
     echo "would remove:"
     for target in "${targets[@]}"; do
         [[ -e "$target" ]] && echo "  $target [$(size_of "$target")]"
     done
+    echo "keeping the digest at $ABSTRACTS"
 
     if [[ "${1:-}" != "--yes" ]]; then
         echo
@@ -106,22 +109,14 @@ prepare() {
     mkdir -p "$DATA_ROOT" "$DATA_ROOT/models" "$DATA_ROOT/index"
     (( FAST_AVAILABLE )) && mkdir -p "$FAST_ROOT/openalex-data/index"
 
-    if ! has_abstracts; then
-        echo "pulling OpenAlex abstract digest"
-        rm -rf "$ABSTRACTS" "$PULL_ROOT"
-        env -u MAXCORES "$SYNC_PYTHON" "$REPO/tools/openalex-cloudstore.py" \
-            pull --local "$PULL_ROOT"
+    echo "pulling OpenAlex abstract digest (skips files already present and unchanged)"
+    env -u MAXCORES "$SYNC_PYTHON" "$REPO/tools/openalex-cloudstore.py" \
+        pull --local "$DATA_ROOT"
 
-        pulled="$PULL_ROOT/openalex/abstracts"
-        has_digest "$pulled" || {
-            echo "OpenAlex pull completed without a report and Parquet shards" >&2
-            exit 1
-        }
-        mv "$pulled" "$ABSTRACTS"
-        rm -rf "$PULL_ROOT"
-    else
-        echo "OpenAlex abstract digest already present"
-    fi
+    has_abstracts || {
+        echo "pull completed without a report and Parquet shards under $ABSTRACTS" >&2
+        exit 1
+    }
 
     if [[ ! -f "$MODEL/model.onnx" || ! -f "$MODEL/tokenizer.onnx" ]]; then
         # bge-reranker-v2-m3 beats ms-marco-MiniLM-L-6-v2 on news-to-paper matching by a
@@ -185,7 +180,7 @@ case "$COMMAND" in
     check) check ;;
     clean) clean "${2:-}" ;;
     prepare) prepare ;;
-    # Anything after 'serve' goes to the server, e.g. serve --max-doc-freq-ratio 0.01
+    # Anything after 'serve' goes to the server, e.g. serve --citation-prior 2.0
     serve) shift; serve "$@" ;;
     *) echo "Usage: $0 [check|clean [--yes]|prepare|serve [server args...]]" >&2; exit 2 ;;
 esac
