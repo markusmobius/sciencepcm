@@ -152,8 +152,12 @@ public static class LexicalIndex
         {
             source.Title,
             source.Body,
-            metadata?.Authors,
-            metadata?.Institutions,
+            // Capped: a 765-author trial paper carries 13,000 characters of names, which
+            // is 80% of its searchable text, and BM25 divides every term's contribution
+            // by document length. Uncapped, collaboration papers sank below the news
+            // pieces and errata written about them. News prose names the first authors.
+            Truncate(metadata?.Authors, 400),
+            Truncate(metadata?.Institutions, 400),
             metadata?.Journal,
             metadata?.Doi,
             metadata?.Pmcid,
@@ -162,6 +166,13 @@ public static class LexicalIndex
             metadata?.Topics,
             metadata?.Keywords,
         }.Where(value => !string.IsNullOrWhiteSpace(value)));
+    }
+
+    private static string? Truncate(string? value, int length)
+    {
+        if (string.IsNullOrEmpty(value) || value.Length <= length) return value;
+        var cut = value.LastIndexOf(';', length);
+        return value[..(cut > 0 ? cut : length)];
     }
 
     private static void AddStored(Document document, string field, string value)
