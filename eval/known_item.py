@@ -45,11 +45,29 @@ def rank_of(results: list[dict], expected: str) -> int | None:
     return None
 
 
-def lookup(session: McpSession, tool: str, openalex_id: str) -> dict | None:
+def lookup_argument(session: McpSession, tool: str) -> str:
+    """Take the id parameter's name from the server's own schema.
+
+    Hardcoding it is unsafe: get_paper calls it articleKey, get_openalex_work calls it
+    openAlexId, and the MCP SDK drops unknown argument names silently, so a mismatch
+    reports the paper as missing rather than raising.
+    """
+    for spec in session._call("tools/list", {})["tools"]:
+        if spec["name"] != tool:
+            continue
+        schema = spec.get("inputSchema", {})
+        names = schema.get("required") or list(schema.get("properties", {}))
+        if not names:
+            raise RuntimeError(f"tool '{tool}' declares no parameters")
+        return names[0]
+    raise RuntimeError(f"tool '{tool}' is not offered by this server")
+
+
+def lookup(session: McpSession, tool: str, argument: str, openalex_id: str) -> dict | None:
     """Is the work in the index at all? Separates 'we never ingested it' from 'we ranked
     it badly', which need completely different fixes."""
     try:
-        record = session.call_tool(tool, {"articleKey": openalex_id})
+        record = session.call_tool(tool, {argument: openalex_id})
     except Exception as error:  # noqa: BLE001
         return {"error": str(error)[:120]}
     return None if record.get("error") else record
@@ -74,6 +92,7 @@ def main() -> int:
                  args.questions.read_text(encoding="utf-8").splitlines() if line.strip()]
 
     session = McpSession(args.endpoint, args.token, args.timeout)
+    lookup_arg = lookup_argument(session, args.lookup_tool)
     ranks: list[int | None] = []
     indexed = 0
     records = []
@@ -94,7 +113,7 @@ def main() -> int:
 
         present = None
         if rank is None and question.get("expect_openalex_id"):
-            present = lookup(session, args.lookup_tool, question["expect_openalex_id"])
+            present = lookup(session, args.lookup_tool, lookup_arg, question["expect_openalex_id"])
             if present and not present.get("error"):
                 indexed += 1
                 has_abstract = bool((present.get("abstract") or "").strip())
