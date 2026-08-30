@@ -31,7 +31,9 @@ var options = new ServerOptions
     ParallelSearch = builder.Configuration.GetValue("parallel-search", true),
     ExcludeWorkTypes = (builder.Configuration["exclude-types"] ?? "peer-review,dataset,paratext")
         .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
-    CitationPriorWeight = builder.Configuration.GetValue("citation-prior", 1.0),
+    // 2.0 over 1.0 moved the landmark sets from MRR 0.653 to 0.750 (long) and 0.625 to
+    // 0.667 (terse); the ChAdOx1 Lancet paper went from unretrieved to rank 6.
+    CitationPriorWeight = builder.Configuration.GetValue("citation-prior", 2.0),
     UseGpu = builder.Configuration.GetValue("gpu", false),
     GpuMemoryLimitBytes = builder.Configuration.GetValue<long>("gpu-mem-limit-gb", 0) * 1024L * 1024 * 1024,
 };

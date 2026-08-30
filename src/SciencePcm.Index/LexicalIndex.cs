@@ -126,8 +126,10 @@ public static class LexicalIndex
             AddSearchable(document, AuthorsField, metadata.Authors);
             AddSearchable(document, InstitutionsField, metadata.Institutions);
 
-            // One indexed term per name, so "all papers by Duflo, Esther" is an exact
-            // filter rather than two common words matching half the corpus.
+            // Written but no longer queried: the author filter is a phrase over the
+            // analysed text, because these whole-string terms only ever matched one of
+            // the several formats the same name arrives in. Kept so the schema, and so
+            // every built index, stays valid.
             foreach (var author in SplitNames(metadata.Authors))
             {
                 document.Add(new StringField(AuthorExactField, author, Field.Store.NO));
@@ -371,16 +373,12 @@ public sealed class LexicalSearcher : IDisposable
 
             if (hasAuthor)
             {
-                combined.Add(
-                    new TermQuery(new Term(LexicalIndex.AuthorExactField, author!.Trim().ToLowerInvariant())),
-                    Occur.MUST);
+                combined.Add(NameFilter(LexicalIndex.AuthorsField, author!), Occur.MUST);
             }
 
             if (hasJournal)
             {
-                combined.Add(
-                    new TermQuery(new Term(LexicalIndex.VenueExactField, journal!.Trim().ToLowerInvariant())),
-                    Occur.MUST);
+                combined.Add(NameFilter(LexicalIndex.VenueField, journal!), Occur.MUST);
             }
 
             if (yearMin is not null || yearMax is not null)
@@ -443,6 +441,19 @@ public sealed class LexicalSearcher : IDisposable
 
         return hits;
     }
+
+    /// <summary>
+    /// Phrase match on the analysed name text, rather than an exact whole-string term.
+    ///
+    /// Upstream author formats are inconsistent - "Jennifer Doudna", "Doudna, Jennifer A."
+    /// and bare "Doudna" all occur, and each exact form matched a disjoint set of papers.
+    /// Journals were the same: "Lancet" found nothing because the stored name is "The
+    /// Lancet". A phrase over the analysed field matches all of those without the caller
+    /// having to guess the stored form.
+    /// </summary>
+    private Query NameFilter(string field, string value) =>
+        new QueryBuilder(_analyzer).CreatePhraseQuery(field, value.Trim())
+        ?? new TermQuery(new Term(field, value.Trim().ToLowerInvariant()));
 
     /// <summary>
     /// One dismax per query term across the searchable fields, which is how Lucene 4
