@@ -12,13 +12,10 @@ FAST_ROOT="${SCIENCEPCM_FAST_ROOT:-/datadisk}"
 MODEL="$DATA_ROOT/models/bge-reranker"
 PORT="${SCIENCEPCM_PORT:-8080}"
 
-# Chosen by whether the fast disk is usable, not by whether the index is already there:
-# /datadisk is empty after a deallocation and restore() is what fills it.
-if [[ -d "$FAST_ROOT" && -w "$FAST_ROOT" ]]; then
-    INDEX_ROOT="$FAST_ROOT/sciencepcm-data/index"
-else
-    INDEX_ROOT="$DATA_ROOT/index"
-fi
+# The index lives only on the NVMe. A durable copy of the OpenAlex index does not fit on
+# the OS disk, so neither service keeps one and both rebuild after a deallocation - the
+# stamp goes with the wiped disk, so prepare notices on its own.
+INDEX_ROOT="$FAST_ROOT/sciencepcm-data/index"
 
 ABSTRACTS_INDEX="$INDEX_ROOT/abstracts-bm25"
 PASSAGE_INDEX="$INDEX_ROOT/passages-bm25"
@@ -38,9 +35,8 @@ index_current() {
         >/dev/null 2>&1 )
 }
 
-# Restoring the wiped NVMe copy and rebuilding after new data are the same question -
-# is the index at this path current - so one waterfall answers both. Cheapest branch
-# first: keep, restore, rebuild.
+# Restoring and rebuilding collapse into one question - is the index at this path
+# current - now that there is only one path.
 prepare() {
     local pairs=(
         "abstracts-bm25|abstracts|$CORPUS/abstracts/*.parquet|"
@@ -49,36 +45,23 @@ prepare() {
 
     for pair in "${pairs[@]}"; do
         IFS='|' read -r name schema glob metadata <<< "$pair"
-        local fast="$INDEX_ROOT/$name" durable="$DATA_ROOT/index/$name"
+        local out="$INDEX_ROOT/$name"
         local metadata_args=()
         [[ -n "$metadata" ]] && metadata_args=(--metadata "$metadata")
 
-        if index_current "$fast" "$schema" "$glob" "$metadata"; then
+        if index_current "$out" "$schema" "$glob" "$metadata"; then
             echo "$name is current"
-            continue
-        fi
-
-        if [[ "$fast" != "$durable" ]] && index_current "$durable" "$schema" "$glob" "$metadata"; then
-            echo "restoring $name from $durable"
-            mkdir -p "$fast"
-            rsync -a --delete --info=stats2 "$durable/" "$fast/"
             continue
         fi
 
         echo "building $name"
         # Removed first, not overwritten: Lucene's CREATE mode does not free the old
         # segments until it commits, so an in-place rebuild needs room for two copies.
-        rm -rf "$fast"
-        mkdir -p "$fast"
+        rm -rf "$out"
+        mkdir -p "$out"
         ( cd "$REPO" && dotnet run --project src/SciencePcm.Lexical -c Release -- build \
-            --input "$glob" "${metadata_args[@]}" --schema "$schema" --out "$fast" \
+            --input "$glob" "${metadata_args[@]}" --schema "$schema" --out "$out" \
             --threads "$(nproc)" --ram-buffer 2048 )
-
-        if [[ "$fast" != "$durable" ]]; then
-            echo "mirroring $name to the durable disk"
-            mkdir -p "$durable"
-            rsync -a --delete --info=stats2 "$fast/" "$durable/"
-        fi
     done
 }
 
@@ -95,6 +78,13 @@ check() {
     echo "reranker       : $MODEL"
     echo "local port     : $PORT"
     command -v dotnet >/dev/null || { echo "dotnet is missing" >&2; return 1; }
+    # The index only ever lives here, so an absent fast disk is a hard failure rather
+    # than a quiet fallback onto the OS disk.
+    [[ -d "$FAST_ROOT" && -w "$FAST_ROOT" ]] || {
+        echo "$FAST_ROOT is missing or not writable; the index has nowhere to live" >&2
+        echo "  sudo chown \"\$(id -u):\$(id -g)\" $FAST_ROOT" >&2
+        return 1
+    }
     [[ -d "$ABSTRACTS_INDEX" ]] || { echo "no abstracts index; run: bash tools/sciencemcp-a100.sh prepare" >&2; return 1; }
     [[ -f "$MODEL/model.onnx" ]] || { echo "no reranker; run: bash tools/gcr-prep.sh" >&2; return 1; }
 }

@@ -306,8 +306,8 @@ fi
 step "Search indexes"
 
 # Both are BM25 over Lucene. Nothing here needs the GPU; the cross-encoder is only
-# used at query time. The index waterfall - keep, restore from the durable copy, or
-# rebuild - lives in sciencemcp-a100.sh so the corpus globs are defined once.
+# used at query time. The index build lives in sciencemcp-a100.sh so the corpus globs
+# are defined once, and it rebuilds only when the stamp says the index is stale.
 if [[ $SKIP_INDEX -eq 1 || $SKIP_BUILD -eq 1 ]]; then
     warn "search indexes         skipped"
 elif [[ $CHECK_ONLY -eq 1 ]]; then

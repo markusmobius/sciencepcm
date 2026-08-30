@@ -9,25 +9,16 @@ SYNC_PYTHON="${SCIENCEPCM_DATA_ROOT:-$HOME/sciencepcm-data}/venvs/sync/bin/pytho
 LAB_PYTHON="${SCIENCEPCM_DATA_ROOT:-$HOME/sciencepcm-data}/venvs/lab/bin/python"
 
 # Parquet stays on the managed disk: 134 GB read once, sequentially, during the build,
-# which is the one access pattern a spinning disk handles well. The index goes on NVMe,
-# where Lucene's random reads and segment merges actually need the IOPS.
-# Pulled straight into DATA_ROOT, which is where the cloud path lands it. The blob store
-# fingerprints files and skips identical ones, so re-running prepare costs nothing and
-# picks up a rebuilt digest automatically. Downloading to a temp directory and moving it
-# would hide the existing copy and force a full 134 GB transfer every time.
+# which is the one access pattern a spinning disk handles well. It is pulled straight
+# into DATA_ROOT, where the cloud path lands it, so the blob store can fingerprint what
+# is already there and transfer only what differs.
 ABSTRACTS="$DATA_ROOT/openalex/abstracts"
-DURABLE_INDEX="$DATA_ROOT/index/abstracts-bm25"
-FAST_INDEX="$FAST_ROOT/openalex-data/index/abstracts-bm25"
 MODEL="$DATA_ROOT/models/openalex-bge"
-RETIRED_MODEL="$DATA_ROOT/models/openalex-cross"
 
-if [[ -d "$FAST_ROOT" && -w "$FAST_ROOT" ]]; then
-    INDEX="$FAST_INDEX"
-    FAST_AVAILABLE=1
-else
-    INDEX="$DURABLE_INDEX"
-    FAST_AVAILABLE=0
-fi
+# The index lives only on the NVMe. A durable copy does not fit - the index is larger
+# than the free space on the OS disk - so a deallocation that wipes /datadisk means a
+# rebuild from Parquet, which prepare does on its own because the stamp goes with it.
+INDEX="$FAST_ROOT/openalex-data/index/abstracts-bm25"
 
 STAMP="index-stamp.json"
 COMMAND="${1:-prepare}"
@@ -52,21 +43,6 @@ index_current() {
         >/dev/null 2>&1
 }
 
-# Brings the NVMe copy level with the durable one. Returns non-zero when it cannot, so
-# the caller knows a build is still needed.
-restore() {
-    (( FAST_AVAILABLE )) || return 1
-    if index_current "$FAST_INDEX"; then
-        echo "index on $FAST_ROOT is current"
-        return 0
-    fi
-    index_current "$DURABLE_INDEX" || return 1
-
-    echo "restoring index from $DURABLE_INDEX to $FAST_INDEX"
-    mkdir -p "$FAST_INDEX"
-    rsync -a --delete --info=stats2 "$DURABLE_INDEX/" "$FAST_INDEX/"
-}
-
 free_gb() {
     df -B1G --output=avail "$1" 2>/dev/null | tail -1 | tr -d ' '
 }
@@ -80,15 +56,17 @@ check() {
     echo "host         : $(hostname)"
     echo "data root    : $DATA_ROOT ($(free_gb "$DATA_ROOT" 2>/dev/null || echo '?') GB free)"
     echo "abstracts    : $ABSTRACTS [$(size_of "$ABSTRACTS")]"
-    if (( FAST_AVAILABLE )); then
-        echo "fast index   : $FAST_INDEX [$(size_of "$FAST_INDEX")] ($(free_gb "$FAST_ROOT") GB free on $FAST_ROOT)"
-        echo "durable copy : $DURABLE_INDEX [$(size_of "$DURABLE_INDEX")]"
-    else
-        echo "fast index   : $FAST_ROOT unavailable, serving from $DURABLE_INDEX"
-    fi
+    echo "index        : $INDEX [$(size_of "$INDEX")] ($(free_gb "$FAST_ROOT" 2>/dev/null || echo '?') GB free on $FAST_ROOT)"
     echo "reranker     : $MODEL"
     echo "local port   : 8081"
     command -v dotnet >/dev/null || { echo "dotnet is missing" >&2; return 1; }
+    # The index only ever lives here, so an absent fast disk is a hard failure rather
+    # than a quiet fallback onto the OS disk, where it does not fit anyway.
+    [[ -d "$FAST_ROOT" && -w "$FAST_ROOT" ]] || {
+        echo "$FAST_ROOT is missing or not writable; the index has nowhere to live" >&2
+        echo "  sudo chown \"\$(id -u):\$(id -g)\" $FAST_ROOT" >&2
+        return 1
+    }
     [[ -x "$SYNC_PYTHON" ]] || { echo "sync Python missing: $SYNC_PYTHON" >&2; return 1; }
     [[ -x "$LAB_PYTHON" ]] || { echo "lab Python missing: $LAB_PYTHON" >&2; return 1; }
     [[ -n "${CLOUDPDS_CLIENT_HASH:-${legopds_clienthash:-}}" ]] || {
@@ -98,8 +76,7 @@ check() {
 
 prepare() {
     check
-    mkdir -p "$DATA_ROOT" "$DATA_ROOT/models" "$DATA_ROOT/index"
-    (( FAST_AVAILABLE )) && mkdir -p "$FAST_ROOT/openalex-data/index"
+    mkdir -p "$DATA_ROOT" "$DATA_ROOT/models" "$(dirname "$INDEX")"
 
     echo "pulling OpenAlex abstract digest (skips files already present and unchanged)"
     if ! env -u MAXCORES "$SYNC_PYTHON" "$REPO/tools/openalex-cloudstore.py" \
@@ -130,14 +107,7 @@ prepare() {
     dotnet build "$REPO/src/OpenAlex.Server/OpenAlex.Server.csproj" \
         -c Release -p:UseGpu=true --nologo
 
-    rm -rf "$RETIRED_MODEL"
-
-    # Three cases, cheapest first. The builder answers "is the index at this path current"
-    # for either disk, so restoring the wiped NVMe copy and rebuilding after a new digest
-    # are the same decision rather than two services.
-    if restore; then
-        :
-    elif index_current "$INDEX"; then
+    if index_current "$INDEX"; then
         echo "index is current"
     else
         # Removed first, not overwritten: Lucene's CREATE mode does not free the old
@@ -147,13 +117,6 @@ prepare() {
         dotnet run --project "$REPO/src/OpenAlex.Index" -c Release -- \
             build --input "$ABSTRACTS/*.parquet" --schema openalex \
             --out "$INDEX" --threads 16 --ram-buffer 4096
-
-        # /datadisk is wiped on deallocate, so the NVMe copy is only ever a working copy.
-        if (( FAST_AVAILABLE )) && [[ "$INDEX" == "$FAST_INDEX" ]]; then
-            echo "mirroring index to the durable disk"
-            mkdir -p "$DURABLE_INDEX"
-            rsync -a --delete --info=stats2 "$FAST_INDEX/" "$DURABLE_INDEX/"
-        fi
     fi
 
     echo "OpenAlex A100 preparation complete. Run: bash tools/openalex-a100.sh serve"
@@ -177,5 +140,5 @@ case "$COMMAND" in
     prepare) prepare ;;
     # Anything after 'serve' goes to the server, e.g. serve --citation-prior 2.0
     serve) shift; serve "$@" ;;
-    *) echo "Usage: $0 [check|prepare|restore|serve [server args...]]" >&2; exit 2 ;;
+    *) echo "Usage: $0 [check|prepare|serve [server args...]]" >&2; exit 2 ;;
 esac
