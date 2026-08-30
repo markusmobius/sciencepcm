@@ -19,7 +19,7 @@ there is nothing to sample. Against a v2 digest, or before the ingest finishes, 
 a DOI list with --dois instead.
 
 Usage:
-    python eval/s2_probe.py --parquet '~/openalex-data/abstracts/abstracts-part-000*.parquet' \\
+    python eval/s2_probe.py --parquet '~/mcp/data/openalex/abstracts/abstracts-part-000*.parquet' \\
         --sample 500 --control --out runs/s2-probe.jsonl
 
     python eval/s2_probe.py --dois missing.txt --out runs/s2-probe.jsonl

@@ -169,40 +169,44 @@ It is a waterfall, and each stage decides for itself whether there is work to do
 1. **Digest** — pulled every time. The blob store fingerprints files and transfers only
    what differs, so an unchanged digest costs nothing and a rebuilt one is picked up
    automatically.
-2. **Reranker** — exported only when the ONNX files are absent.
+2. **Reranker** — exported only when the ONNX files are absent. Both services share one
+   `bge-reranker-v2-m3` export; the weights are identical.
 3. **Index** — the builder writes `index-stamp.json` beside the index recording the
    schema version and a fingerprint of the source shards. If both still match it returns
    immediately; if the digest changed or the field layout changed, it rebuilds. Bump
    `LexicalIndex.SchemaVersion` when the fields change and every index invalidates itself.
-4. **Mirror** — rsync to the durable disk, which is a no-op when nothing moved.
 
 So a schema change or a new digest needs no manual cleanup: pull the code and run
 `prepare`. There is no `clean` command, because deciding what is stale is the tool's job.
 
-The digest lives at `~/openalex-data/openalex/abstracts`, which is where the cloud path
-puts it. A deployment that predates this holds it at `~/openalex-data/abstracts`; move it
-rather than re-downloading 134 GB:
-
-```bash
-mkdir -p ~/openalex-data/openalex
-mv ~/openalex-data/abstracts ~/openalex-data/openalex/abstracts
-```
-
 ## Disk layout
 
-`prepare` splits the two artifacts across the two disks deliberately:
+One root for everything downloaded, one directory for everything built:
+
+```
+~/mcp/
+   env.sh
+   venvs/     sync, eval, lab, cuda12
+   models/    bge-reranker  (shared by both services)
+   data/      sciencepcm/{abstracts,passages-2019-2025,questions}
+              openalex/abstracts            134 GB
+/datadisk/index/
+   science-abstracts/  science-passages/  openalex-abstracts/
+```
+
+Everything under `data/` came from the cloud and can be deleted and re-pulled; the
+per-service subdirectory is the cloud path, which is why the pull lands in place.
 
 | artifact | location | why |
 | --- | --- | --- |
-| Parquet digest (134 GB) | `~/openalex-data/abstracts` (managed disk) | read once, sequentially, during the build |
-| Lucene index (~400-450 GB) | `/datadisk/openalex-data/index` (NVMe) | random reads and segment merges need the IOPS |
-| durable index copy | `~/openalex-data/index` (managed disk) | `/datadisk` is wiped on deallocate |
+| Parquet digest (134 GB) | `~/mcp/data/openalex/abstracts` (managed disk) | read once, sequentially, during the build |
+| Lucene index (~745 GB) | `/datadisk/index/openalex-abstracts` (NVMe) | random reads and segment merges need the IOPS |
 
-The index is built on NVMe and then rsynced to the durable copy, so both locations end
-up populated in one pass. After a deallocation wipes `/datadisk`, `prepare` and `serve`
-both notice the fast copy is gone and rsync the durable one back rather than rebuilding —
-minutes instead of hours. There is no separate restore service; it is the same question
-the builder already answers.
+**There is no durable copy of the OpenAlex index.** It is larger than the free space on
+the 1 TB OS disk, so `/datadisk` is its only home and a deallocation costs a rebuild from
+Parquet rather than an rsync. `prepare` notices on its own, because the stamp is wiped
+along with the disk. Both scripts fail rather than fall back to the OS disk if
+`/datadisk` is missing.
 
 Both bottlenecks are real and independent: moving the index to NVMe took a short query
 from 6.65s to 1.24s, while a long natural-language query was unaffected at 5.66s until
@@ -259,14 +263,14 @@ This assumes the machine has already been provisioned by `tools/gcr-prep.sh`, so
 
 ```bash
 cd ~/sciencepcm
-source ~/sciencepcm-data/env.sh
+source ~/mcp/env.sh
 bash tools/openalex-a100.sh check
 bash tools/openalex-a100.sh prepare
 ```
 
-`prepare` pulls the digest into `~/openalex-data/abstracts`, exports the
-`BAAI/bge-reranker-v2-m3` reranker, builds with GPU ONNX Runtime, and creates
-`~/openalex-data/index/abstracts-bm25`. It skips completed stages on rerun.
+`prepare` pulls the digest into `~/mcp/data/openalex/abstracts`, exports the
+`BAAI/bge-reranker-v2-m3` reranker if it is not already there, and builds
+`/datadisk/index/openalex-abstracts`. It skips whatever is already current.
 
 The corpus is multilingual and so is the reranker, but Lucene's analyzer is English
 oriented, so non-English records are retained with weaker recall.
@@ -278,7 +282,7 @@ export OPENALEX_TOKEN='a-different-long-random-string'
 echo "export OPENALEX_TOKEN='$OPENALEX_TOKEN'" >> ~/.bashrc
 
 screen -S openalex-mcp
-source ~/sciencepcm-data/env.sh
+source ~/mcp/env.sh
 cd ~/sciencepcm
 bash tools/openalex-a100.sh serve
 ```

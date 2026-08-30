@@ -13,7 +13,9 @@ LAB_PYTHON="$MCP_ROOT/venvs/lab/bin/python"
 # into data/, where the cloud path lands it, so the blob store can fingerprint what
 # is already there and transfer only what differs.
 ABSTRACTS="$MCP_ROOT/data/openalex/abstracts"
-MODEL="$MCP_ROOT/models/openalex-bge"
+# The same bge-reranker-v2-m3 export both services use: identical weights, so a
+# service-specific copy would be 2.2 GB of duplication.
+MODEL="$MCP_ROOT/models/bge-reranker"
 
 # The index lives only on the NVMe. A durable copy does not fit - the index is larger
 # than the free space on the OS disk - so a deallocation that wipes /datadisk means a
@@ -98,10 +100,9 @@ prepare() {
         # based, it is multilingual like the corpus. It costs about 475 ms per query.
         "$LAB_PYTHON" "$REPO/tools/export_onnx.py" \
             --out "$MCP_ROOT/models" \
-            --reranker BAAI/bge-reranker-v2-m3 \
-            --reranker-name openalex-bge
+            --reranker BAAI/bge-reranker-v2-m3
     else
-        echo "OpenAlex reranker already present"
+        echo "reranker already present"
     fi
 
     dotnet build "$REPO/src/OpenAlex.Server/OpenAlex.Server.csproj" \

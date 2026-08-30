@@ -69,14 +69,14 @@ Expect 20-40 minutes, dominated by the corpus download and the torch install.
 This is the step that is easy to forget later:
 
 ```bash
-source ~/sciencepcm-data/env.sh
+source ~/mcp/env.sh
 ```
 
 **Every new shell needs this** before running anything with `--gpu`. Once you have
 confirmed it works, make it permanent:
 
 ```bash
-echo 'source ~/sciencepcm-data/env.sh' >> ~/.bashrc
+echo 'source ~/mcp/env.sh' >> ~/.bashrc
 ```
 
 `env.sh` sets `PATH` for the local .NET install and `LD_LIBRARY_PATH` for the CUDA 12
@@ -102,7 +102,7 @@ Flags: `--check`, `--skip-pull`, `--force-pull`, `--skip-models`, `--skip-build`
 Layout produced:
 
 ```
-~/sciencepcm-data/
+~/mcp/
   env.sh                                  source this in new shells
   sciencepcm/{abstracts,passages-2019-2025,questions}/
   models/{medcpt-article,medcpt-query}/
@@ -119,7 +119,7 @@ Provisioning worked if all of these hold:
 - [ ] Hostname contains `GCRAZGDL`
 - [ ] `gpu` line shows an A100
 - [ ] Tokenizer parity reports **6/6 probes matched**
-- [ ] `source ~/sciencepcm-data/env.sh` then a `--gpu` benchmark runs without a library error
+- [ ] `source ~/mcp/env.sh` then a `--gpu` benchmark runs without a library error
 
 Note that the parity check is **tokenizer-only** and never loads the ONNX model, so it
 proves nothing about CUDA. The build succeeding only proves the package resolved. The
@@ -207,12 +207,12 @@ whole passage tier rather than extending it.
 Benchmark first, to find the batch size that saturates the GPU:
 
 ```bash
-source ~/sciencepcm-data/env.sh
+source ~/mcp/env.sh
 cd ~/sciencepcm
 
 dotnet run --project src/SciencePcm.Embed -c Release -p:UseGpu=true -- \
-  --model ~/sciencepcm-data/models/medcpt-article \
-  --input "~/sciencepcm-data/sciencepcm/abstracts/part-*.parquet" \
+  --model ~/mcp/models/medcpt-article \
+  --input "~/mcp/data/sciencepcm/abstracts/part-*.parquet" \
   --benchmark --benchmark-texts 20000 --gpu --workers 4 --batch 256
 ```
 
@@ -233,9 +233,9 @@ Then embed the abstract tier:
 
 ```bash
 dotnet run --project src/SciencePcm.Embed -c Release -p:UseGpu=true -- \
-  --model ~/sciencepcm-data/models/medcpt-article \
-  --input "~/sciencepcm-data/sciencepcm/abstracts/part-*.parquet" \
-  --out ~/sciencepcm-data/vectors/abstracts --gpu --workers 4 --batch 256
+  --model ~/mcp/models/medcpt-article \
+  --input "~/mcp/data/sciencepcm/abstracts/part-*.parquet" \
+  --out ~/mcp/vectors/abstracts --gpu --workers 4 --batch 256
 ```
 
 ---
@@ -257,13 +257,13 @@ and open-access links. The passage build joins the existing JATS `articles-part`
 to `chunks-part` by article key; it does not rerun XML ingest.
 
 ```bash
-source ~/sciencepcm-data/env.sh
+source ~/mcp/env.sh
 cd ~/sciencepcm
 
 dotnet run --project src/SciencePcm.Lexical -c Release -- build \
-  --input "$HOME/sciencepcm-data/sciencepcm/abstracts/*.parquet" \
+  --input "$HOME/mcp/data/sciencepcm/abstracts/*.parquet" \
   --schema abstracts \
-  --out ~/sciencepcm-data/index/abstracts-bm25 \
+  --out /datadisk/index/science-abstracts \
   --threads 16 --ram-buffer 2048
 ```
 
@@ -271,10 +271,10 @@ Build the enriched full-text passage index:
 
 ```bash
 dotnet run --project src/SciencePcm.Lexical -c Release -- build \
-  --input "$HOME/sciencepcm-data/sciencepcm/passages-2019-2025/chunks-part-*.parquet" \
-  --metadata "$HOME/sciencepcm-data/sciencepcm/passages-2019-2025/articles-part-*.parquet" \
+  --input "$HOME/mcp/data/sciencepcm/passages-2019-2025/chunks-part-*.parquet" \
+  --metadata "$HOME/mcp/data/sciencepcm/passages-2019-2025/articles-part-*.parquet" \
   --schema chunks \
-  --out ~/sciencepcm-data/index/passages-bm25 \
+  --out /datadisk/index/science-passages \
   --threads 16 --ram-buffer 2048
 ```
 
@@ -287,11 +287,11 @@ bash tools/gcr-prep.sh --force-index --skip-pull --skip-models
 ### 2. Export the reranker
 
 Only needed once, and already done by `gcr-prep.sh` if
-`~/sciencepcm-data/models/bge-reranker` exists.
+`~/mcp/models/bge-reranker` exists.
 
 ```bash
-~/sciencepcm-data/venvs/lab/bin/python tools/export_onnx.py \
-  --out ~/sciencepcm-data/models --reranker BAAI/bge-reranker-v2-m3
+~/mcp/venvs/lab/bin/python tools/export_onnx.py \
+  --out ~/mcp/models --reranker BAAI/bge-reranker-v2-m3
 ```
 
 **BGE is the served reranker.** An LLM judge over 400 questions put it at 0.851 graded
@@ -309,8 +309,8 @@ Pairs are assembled in C#, so verify that too before serving:
 
 ```bash
   dotnet run --project src/SciencePcm.Embed -c Release -- \
-  --model ~/sciencepcm-data/models/bge-reranker \
-  --verify-pairs ~/sciencepcm-data/models/bge-reranker/tokenizer-parity.json
+  --model ~/mcp/models/bge-reranker \
+  --verify-pairs ~/mcp/models/bge-reranker/tokenizer-parity.json
 ```
 
 ### 3. Set the token
@@ -329,7 +329,7 @@ not transport security - anything beyond a trusted network needs TLS in front.
 
 ```bash
 screen -S mcp
-source ~/sciencepcm-data/env.sh
+source ~/mcp/env.sh
 cd ~/sciencepcm
 
 bash tools/sciencemcp-a100.sh serve
@@ -449,10 +449,10 @@ The box is a working copy; nerds21 and the blob store are the durable side. Push
 anything expensive back before you lose it:
 
 ```bash
-~/sciencepcm-data/venvs/sync/bin/python tools/cloudstore.py push \
-  --local ~/sciencepcm-data/vectors/abstracts \
+~/mcp/venvs/sync/bin/python tools/cloudstore.py push \
+  --local ~/mcp/vectors/abstracts \
   --cloud sciencepcm/abstract-vectors \
-  --report ~/sciencepcm-data/vectors/abstracts/embed-report.json
+  --report ~/mcp/vectors/abstracts/embed-report.json
 ```
 
 `push` keys the artifact by a hash of the pipeline configuration read from
