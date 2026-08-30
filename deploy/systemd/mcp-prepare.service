@@ -27,6 +27,12 @@ RemainAfterExit=yes
 
 WorkingDirectory=/home/mobius/sciencepcm
 
+# Credential for the blob store the digest is pulled from. Set in the installed copy by
+# tools/gcr-prep.sh, not here - editing this file would commit it. systemd starts with an
+# empty environment, so a value only in your login profile is not enough. Left empty the
+# pull fails and each prepare falls back to the digest already on disk.
+Environment=legopds_clienthash=
+
 # Restoring or rebuilding hundreds of GB takes far longer than the default 90 second
 # start timeout.
 TimeoutStartSec=0

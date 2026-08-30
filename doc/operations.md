@@ -3,25 +3,32 @@
 Day-to-day running of both services. Provisioning a fresh box is
 [provisioning.md](provisioning.md); this assumes that is done.
 
-## Tokens
+## Secrets
 
-Each service has its own bearer token, handed out independently. They live in the
-installed unit files, not in the repo.
+Three, all living in the installed unit files rather than the repo: a bearer token per
+service, and the blob-store client hash `mcp-prepare` needs to pull the digest.
 
-`tools/gcr-prep.sh` asks for both when it installs the units, and asks again on every
-re-run so a token is never silently carried forward unseen. A blank answer keeps
-whatever is already in the installed unit, or failing that the value of
-`$SCIENCEPCM_TOKEN` / `$OPENALEX_TOKEN` in your shell — the prompt says which, and how
-many characters it is. You can also `sudoedit` them afterwards:
+`tools/gcr-prep.sh` asks for all three when it installs the units, and asks again on every
+re-run so nothing is silently carried forward unseen. A blank answer keeps whatever is
+already in the installed unit, or failing that the matching variable from your shell
+(`$SCIENCEPCM_TOKEN`, `$OPENALEX_TOKEN`, `$legopds_clienthash` or
+`$CLOUDPDS_CLIENT_HASH`) — the prompt says which, and how many characters it is. You can
+also `sudoedit` them afterwards:
 
 ```bash
 sudoedit /etc/systemd/system/mcp-science-server.service     # Environment="SCIENCEPCM_TOKEN=..."
 sudoedit /etc/systemd/system/mcp-openalex-server.service    # Environment="OPENALEX_TOKEN=..."
+sudoedit /etc/systemd/system/mcp-prepare.service            # Environment="legopds_clienthash=..."
 sudo systemctl daemon-reload
 ```
 
-Use the values your existing clients already send. Generating fresh ones breaks every
-configured client at once.
+Use the token values your existing clients already send. Generating fresh ones breaks
+every configured client at once.
+
+The client hash has to be in the unit because systemd starts services with an empty
+environment — a value exported only from your login profile is not visible at boot.
+Without it the pull fails and each `prepare` logs `pull failed; continuing with the
+digest already on disk`, so the services still come up, just without fresh data.
 
 Left empty, a server starts unauthenticated and prints `auth: OPEN - no
 SCIENCEPCM_TOKEN set`. Check that line after a restart — an empty value looks exactly
@@ -53,9 +60,9 @@ Both scripts pass anything after `serve` to the server, e.g.
 ## As services
 
 `tools/gcr-prep.sh` installs them. It asks once before touching `/etc`, prompts for each
-token without echoing it, writes the units `root:root` mode 600, and enables them at boot
+secret without echoing it, writes the units `root:root` mode 600, and enables them at boot
 without starting them. Re-running refreshes the units from the repo and prompts again;
-press Enter twice to keep the tokens that are already installed.
+press Enter through the prompts to keep what is already installed.
 
 It also rewrites `User=` and the `/home/mobius` paths for the account running it. That
 matters on a domain-joined box, where the login is `mobius@microsoft.com` while `$HOME`

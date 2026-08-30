@@ -228,13 +228,13 @@ SYSTEMD_DIR=/etc/systemd/system
 UNITS=(mcp-prepare.service mcp-science-server.service mcp-openalex-server.service mcp-tunnel.service)
 RUN_USER="$(id -un)"
 
-TOKEN=""
+SECRET=""
 
 # Always asks when there is a terminal. The installed unit, then the environment,
-# supply the default behind a blank answer, so re-running is two Enters and cannot
-# blank a working token.
-resolve_token() {
-    local unit=$1 var=$2 current="" source="" hint
+# supply the default behind a blank answer, so re-running is a few Enters and cannot
+# blank a working value.
+resolve_secret() {
+    local unit=$1 var=$2 consequence=$3 alt=${4:-} current="" source="" hint
     if [[ -r "$SYSTEMD_DIR/$unit" ]]; then
         current="$(sed -n "s/^Environment=\"\?$var=\([^\"]*\)\"\?\$/\1/p" "$SYSTEMD_DIR/$unit" | tail -1)"
         [[ -z "$current" ]] || source="the installed unit"
@@ -243,22 +243,26 @@ resolve_token() {
         current="${!var}"
         source="\$$var in your environment"
     fi
+    if [[ -z "$current" && -n "$alt" && -n "${!alt:-}" ]]; then
+        current="${!alt}"
+        source="\$$alt in your environment"
+    fi
 
     if [[ ! -t 0 ]]; then
-        TOKEN="$current"
+        SECRET="$current"
         [[ -z "$source" ]] || info "$var from $source"
     else
         if [[ -n "$current" ]]; then
             hint="blank keeps the ${#current}-character value from $source"
         else
-            hint="blank leaves that server unauthenticated"
+            hint="blank means $consequence"
         fi
-        read -rsp "  $var ($hint): " TOKEN < /dev/tty
+        read -rsp "  $var ($hint): " SECRET < /dev/tty
         echo
-        [[ -n "$TOKEN" ]] || TOKEN="$current"
+        [[ -n "$SECRET" ]] || SECRET="$current"
     fi
-    [[ "$TOKEN" != *[\"$'\n']* ]] || die "$var contains a quote or newline; systemd cannot carry that."
-    [[ -n "$TOKEN" ]] || warn "$var empty - that server will accept unauthenticated requests"
+    [[ "$SECRET" != *[\"$'\n']* ]] || die "$var contains a quote or newline; systemd cannot carry that."
+    [[ -n "$SECRET" ]] || warn "$var empty - $consequence"
 }
 
 install_unit() {
@@ -268,12 +272,12 @@ install_unit() {
     # User= and the paths are rewritten for this account: a domain login can be
     # mobius@microsoft.com with $HOME still /home/mobius, and a User= systemd cannot
     # resolve fails the unit with 217/USER before anything runs.
-    # Token via the environment, not -v: awk's argv is visible in ps.
-    UNIT_TOKEN="$TOKEN" awk -v var="$var" -v user="$RUN_USER" \
-                             -v repo="$REPO" -v root="$MCP_ROOT" -v home="$HOME" '
+    # Secret via the environment, not -v: awk's argv is visible in ps.
+    UNIT_SECRET="$SECRET" awk -v var="$var" -v user="$RUN_USER" \
+                              -v repo="$REPO" -v root="$MCP_ROOT" -v home="$HOME" '
         { gsub("/home/mobius/sciencepcm", repo); gsub("/home/mobius/mcp", root); gsub("/home/mobius", home) }
         /^User=/ { print "User=" user; next }
-        var != "" && $0 ~ "^Environment=\"?" var "=" { printf "Environment=\"%s=%s\"\n", var, ENVIRON["UNIT_TOKEN"]; next }
+        var != "" && $0 ~ "^Environment=\"?" var "=" { printf "Environment=\"%s=%s\"\n", var, ENVIRON["UNIT_SECRET"]; next }
         { print }' "$REPO/deploy/systemd/$unit" > "$tmp"
     sudo install -m 600 -o root -g root "$tmp" "$SYSTEMD_DIR/$unit"
     info "installed $unit"
@@ -304,13 +308,19 @@ else
     fi
 
     if [[ "$reply" =~ ^[Yy] ]]; then
-        resolve_token mcp-science-server.service SCIENCEPCM_TOKEN
-        install_unit  mcp-science-server.service SCIENCEPCM_TOKEN
-        resolve_token mcp-openalex-server.service OPENALEX_TOKEN
-        install_unit  mcp-openalex-server.service OPENALEX_TOKEN
-        install_unit  mcp-prepare.service
-        install_unit  mcp-tunnel.service
-        TOKEN=""
+        resolve_secret mcp-science-server.service SCIENCEPCM_TOKEN \
+            "that server will accept unauthenticated requests"
+        install_unit   mcp-science-server.service SCIENCEPCM_TOKEN
+        resolve_secret mcp-openalex-server.service OPENALEX_TOKEN \
+            "that server will accept unauthenticated requests"
+        install_unit   mcp-openalex-server.service OPENALEX_TOKEN
+        # systemd starts with an empty environment, so the boot-time pull cannot see
+        # the hash from your login profile; it has to be carried in the unit.
+        resolve_secret mcp-prepare.service legopds_clienthash \
+            "the boot-time pull falls back to the digest already on disk" CLOUDPDS_CLIENT_HASH
+        install_unit   mcp-prepare.service legopds_clienthash
+        install_unit   mcp-tunnel.service
+        SECRET=""
 
         sudo systemctl daemon-reload
         if [[ $FRESH -eq 1 ]]; then
@@ -362,10 +372,11 @@ cat <<EOF
             $SYSTEMD_DIR/
 
   Copied by hand they still say User=mobius, which fails with 217/USER on this box.
-  Set User=$RUN_USER and the tokens in the installed copies - the ones in the repo
+  Set User=$RUN_USER and the secrets in the installed copies - the ones in the repo
   are empty on purpose, and an empty token starts the server unauthenticated:
     sudoedit $SYSTEMD_DIR/mcp-science-server.service    # SCIENCEPCM_TOKEN=
     sudoedit $SYSTEMD_DIR/mcp-openalex-server.service   # OPENALEX_TOKEN=
+    sudoedit $SYSTEMD_DIR/mcp-prepare.service           # legopds_clienthash=
 
     sudo systemctl daemon-reload
     sudo systemctl enable --now mcp-prepare mcp-science-server mcp-openalex-server mcp-tunnel
