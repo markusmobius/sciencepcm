@@ -1,3 +1,17 @@
+"""How much of OpenAlex has no abstract, by population.
+
+This decides whether abstract-less works belong in the index at all. Dropping them
+is tempting - they retrieve on title alone - but the gap is not random: it widens
+with citation count, so dropping them loses exactly the papers most likely to be
+asked for. The fielded schema keeps them instead (see retrieval.md).
+
+Two ``per-page=1`` requests per row, reading only ``meta.count``, so it downloads
+almost nothing and needs no key. Re-run it when the digest is refreshed.
+
+Usage:
+    python eval/abstract_coverage.py
+"""
+
 import json
 import urllib.parse
 import urllib.request

@@ -10,7 +10,7 @@ index and on BioASQ qrels have been deleted, and what they taught is recorded in
 | is *this* paper returned, and at what rank | `known_item.py` | no |
 | are these results any good | `mcp_run.py` → `judge.py` | yes |
 | what do two configurations return, side by side | `compare_runs.py` | no |
-| does the corpus contain what we think | `s2_probe.py` | no |
+| does the corpus contain what we think | `s2_probe.py`, `abstract_coverage.py` | no |
 | does an LLM answer better with the tools | `llm_ab.py` | yes |
 
 ## Known-item: is the right paper returned
@@ -60,6 +60,9 @@ There is no local grade cache; the LLM server caches on prompt and model.
 scoring — the fastest way to see *how* two configurations differ. `s2_probe.py` measures
 what fraction of a defined cohort another source could supply, and produced the decision
 in [openalex.md](openalex.md#why-there-is-no-semantic-scholar-merge).
+`abstract_coverage.py` asks the OpenAlex API how much of each population has no
+abstract; it is where the 21.6% / 29.1% figures in [retrieval.md](retrieval.md) come
+from, and it takes seconds.
 
 ---
 
