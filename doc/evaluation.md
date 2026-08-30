@@ -1,7 +1,72 @@
+# Evaluation
+
+Three questions get asked of these services, and each has its own tool. Everything in
+`eval/` runs against the current code; experiments that depended on the retired dense
+index and on BioASQ qrels have been deleted, and what they taught is recorded in
+[retrieval.md](retrieval.md#rejected).
+
+| question | tool | needs an LLM |
+| --- | --- | --- |
+| is *this* paper returned, and at what rank | `known_item.py` | no |
+| are these results any good | `mcp_run.py` → `judge.py` | yes |
+| what do two configurations return, side by side | `compare_runs.py` | no |
+| does the corpus contain what we think | `s2_probe.py` | no |
+| does an LLM answer better with the tools | `llm_ab.py` | yes |
+
+## Known-item: is the right paper returned
+
+Scored against ground-truth DOIs written down in advance, so it is instant, free and
+deterministic. This is the first thing to run after any ranking or schema change.
+
+```bash
+$LAB eval/known_item.py --endpoint https://www.openalexmcp.econlabs.org/mcp \
+  --questions eval/questions-landmark.jsonl --stages --show 5
+```
+
+`--stages` prints the BM25 rank beside the reranked rank, which separates "never
+retrieved" from "retrieved then demoted" — opposite fixes. `--show N` prints what
+outranked the target, with `type` and `cited_by_count`. On a miss it looks the paper up
+by ID and reports `IN INDEX but not retrieved` or `NOT IN INDEX`, so a corpus problem
+never gets mistaken for a ranking problem.
+
+Baselines: `questions-landmark.jsonl` (long news-style) and
+`questions-landmark-short.jsonl` (terse) cover four papers with known DOIs.
+
+## Judged: are the results any good
+
+`mcp_run.py` drives the live endpoint and writes a run file; `judge.py` pools results
+across systems so each document is graded once, then scores nDCG@10, mean grade,
+fraction relevant, hit@1, hit@k and MRR.
+
+```bash
+$LAB eval/mcp_run.py --endpoint $OA --token "$OPENALEX_TOKEN" \
+  --questions eval/questions-newsmatch.jsonl --tool search_openalex --out runs/v3.jsonl
+
+$LAB eval/judge.py --run runs/v3.jsonl --prompt-file eval/prompts/newsmatch.txt \
+  --unit paper --workers 32
+```
+
+Two things to hold onto. **Graded nDCG normalises against the pool**, so absolute values
+shift when the set of systems changes — only compare within one judge run. And **mean
+grade and "fraction ≥2" are blind to ordering**: on known-item work they showed two
+rerankers as identical while hit@1 differed by 17 points. For known-item use hit@1 and
+MRR; for topical work use nDCG.
+
+There is no local grade cache; the LLM server caches on prompt and model.
+
+## The rest
+
+`compare_runs.py` prints run files side by side with titles, for reading rather than
+scoring — the fastest way to see *how* two configurations differ. `s2_probe.py` measures
+what fraction of a defined cohort another source could supply, and produced the decision
+in [openalex.md](openalex.md#why-there-is-no-semantic-scholar-merge).
+
+---
+
 # Evaluating an LLM with and without ScienceMCP
 
-This guide describes a paired, end-to-end evaluation of the same LLM answering the
-same neuroscience questions:
+The rest of this document is the paired, end-to-end protocol: the same LLM answering the
+same neuroscience questions, with and without the tools.
 
 - **Control:** the LLM has no ScienceMCP tools and no other retrieval tools.
 - **Treatment:** the LLM can use the ScienceMCP tools.

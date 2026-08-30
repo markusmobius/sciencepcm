@@ -1,5 +1,4 @@
 duckdb>=1.1
-numpy>=1.26
 requests>=2.32
 
 # judge.py. Needs LLM_SERVER_URL, LLM_USER_CODE and LLM_CACHE in the environment.

@@ -58,17 +58,27 @@ whichever scored highest discarded the canonical one.
 
 ## Rejected
 
-Kept here because re-proposing them costs a day each.
+Kept here because re-proposing them costs a day each. The scripts that produced these
+numbers have been deleted — they depend on vectors and qrels that no longer exist — so
+these are the surviving record.
 
 | approach | result |
 | --- | --- |
-| dense retrieval (MedCPT) | 0.117 nDCG@10 against BM25's 0.2255. Vectors verified correct: cosine 1.0000 on 198/198 re-encodings. |
-| RRF fusion of BM25 + dense | 0.7647 with rerank against 0.7713 for BM25 + rerank. Noise. |
+| dense retrieval (MedCPT) | 0.117 nDCG@10 HNSW, 0.125 exact, against BM25's 0.2255. Not a bug: stored vectors re-encoded with PyTorch matched at cosine 1.0000 on 198/198, and HNSW cost only ~6% against brute force. |
+| RRF fusion of BM25 + dense | recall@100 0.4639 → 0.4736, and nDCG@10 *dropped*: fusion dilutes the stronger system. With rerank, 0.7647 against 0.7713 for BM25 + rerank. Noise. |
+| MedCPT encoder variants | Reference usage (pair input, raw dot product) beat ours (concatenated, cosine) 0.7586 to 0.7134 on a small pool. Real, but ~6% on the leg that lost anyway. |
 | `--max-doc-freq-ratio` | Changed results, improved nothing. Removed. |
 | `--bm25-b` | Length normalisation is not the lever once fields are separate. Removed. |
 | `--rerank-candidates` 500 or 1000 | 500 changed nothing; 1000 made the landmark set slightly worse. Stays at 100. |
 
-The last one is worth internalising: the cross-encoder is not the weak stage. On the
+**BioASQ was the bigger trap.** It ranked BM25+rerank *below* BM25 alone, which reversed
+once an LLM judge looked at the same runs. Only ~10% of its gold judgements exist in this
+corpus — about 4 judged documents per query among 5.3M — so unjudged-but-relevant papers
+scored as errors, which specifically penalises semantic methods while BM25's exact-term
+matches are likelier to be the ones annotators found. Do not let a sparse external
+benchmark pick the architecture. The qrels builder and its harness are gone.
+
+The other lesson from that period: the cross-encoder is not the weak stage. On the
 landmark set it lifted papers from BM25 rank 14 to rank 1, and rescued papers BM25 ranked
 outside its own top 50. When a paper is missing, look at the first stage.
 
