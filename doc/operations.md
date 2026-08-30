@@ -8,8 +8,11 @@ Day-to-day running of both services. Provisioning a fresh box is
 Each service has its own bearer token, handed out independently. They live in the
 installed unit files, not in the repo.
 
-`tools/gcr-prep.sh` asks for both and writes them in (see [As services](#as-services)).
-To change one afterwards:
+`tools/gcr-prep.sh` asks for both when it installs the units, and asks again on every
+re-run so a token is never silently carried forward unseen. A blank answer keeps
+whatever is already in the installed unit, or failing that the value of
+`$SCIENCEPCM_TOKEN` / `$OPENALEX_TOKEN` in your shell — the prompt says which, and how
+many characters it is. You can also `sudoedit` them afterwards:
 
 ```bash
 sudoedit /etc/systemd/system/mcp-science-server.service     # Environment="SCIENCEPCM_TOKEN=..."
@@ -25,9 +28,9 @@ SCIENCEPCM_TOKEN set`. Check that line after a restart — an empty value looks 
 like a working one until someone reaches the endpoint without a token. `/health` never
 needs a token, which is what separates "unreachable" from "wrong token" when debugging.
 
-Unit files under `/etc/systemd/system` are world-readable by default; `sudo chmod 600`
-them if that matters on this box. Running by hand instead of under systemd, the servers
-read the same variables from the shell, or take `--token`.
+Unit files under `/etc/systemd/system` are world-readable by default; `gcr-prep.sh`
+installs these `root:root` mode 600 instead. Running by hand rather than under systemd,
+the servers read the same variables from the shell, or take `--token`.
 
 ## Running
 
@@ -49,10 +52,10 @@ Both scripts pass anything after `serve` to the server, e.g.
 
 ## As services
 
-`tools/gcr-prep.sh` installs them. It asks once, prompts for each token without echoing
-it, writes the units `root:root` mode 600, and enables them at boot without starting
-them. Re-running refreshes the units from the repo and carries the existing tokens over,
-so it never re-asks and never blanks a working token.
+`tools/gcr-prep.sh` installs them. It asks once before touching `/etc`, prompts for each
+token without echoing it, writes the units `root:root` mode 600, and enables them at boot
+without starting them. Re-running refreshes the units from the repo and prompts again;
+press Enter twice to keep the tokens that are already installed.
 
 `mcp-console.service` is deliberately not installed here — it runs on the relay.
 

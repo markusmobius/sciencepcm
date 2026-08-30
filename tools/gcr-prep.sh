@@ -229,22 +229,32 @@ UNITS=(mcp-prepare.service mcp-science-server.service mcp-openalex-server.servic
 
 TOKEN=""
 
-# Prefers the value already installed, so re-running never asks twice and never
-# overwrites a working token with a blank one.
+# Always asks when there is a terminal. The installed unit, then the environment,
+# supply the default behind a blank answer, so re-running is two Enters and cannot
+# blank a working token.
 resolve_token() {
-    local unit=$1 var=$2
-    TOKEN=""
+    local unit=$1 var=$2 current="" source="" hint
     if [[ -r "$SYSTEMD_DIR/$unit" ]]; then
-        TOKEN="$(sed -n "s/^Environment=\"\?$var=\([^\"]*\)\"\?\$/\1/p" "$SYSTEMD_DIR/$unit" | tail -1)"
+        current="$(sed -n "s/^Environment=\"\?$var=\([^\"]*\)\"\?\$/\1/p" "$SYSTEMD_DIR/$unit" | tail -1)"
+        [[ -z "$current" ]] || source="the installed unit"
     fi
-    if [[ -n "$TOKEN" ]]; then
-        info "$var kept from the installed unit"
-    elif [[ -n "${!var:-}" ]]; then
-        TOKEN="${!var}"
-        info "$var taken from the environment"
-    elif [[ -t 0 ]]; then
-        read -rsp "  $var (blank leaves that server unauthenticated): " TOKEN < /dev/tty
+    if [[ -z "$current" && -n "${!var:-}" ]]; then
+        current="${!var}"
+        source="\$$var in your environment"
+    fi
+
+    if [[ ! -t 0 ]]; then
+        TOKEN="$current"
+        [[ -z "$source" ]] || info "$var from $source"
+    else
+        if [[ -n "$current" ]]; then
+            hint="blank keeps the ${#current}-character value from $source"
+        else
+            hint="blank leaves that server unauthenticated"
+        fi
+        read -rsp "  $var ($hint): " TOKEN < /dev/tty
         echo
+        [[ -n "$TOKEN" ]] || TOKEN="$current"
     fi
     [[ "$TOKEN" != *[\"$'\n']* ]] || die "$var contains a quote or newline; systemd cannot carry that."
     [[ -n "$TOKEN" ]] || warn "$var empty - that server will accept unauthenticated requests"
