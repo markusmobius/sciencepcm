@@ -199,8 +199,10 @@ mv ~/openalex-data/abstracts ~/openalex-data/openalex/abstracts
 | durable index copy | `~/openalex-data/index` (managed disk) | `/datadisk` is wiped on deallocate |
 
 The index is built on NVMe and then rsynced to the durable copy, so both locations end
-up populated in one pass. `datadisk-restore.service` syncs the durable copy back after a
-deallocation, which costs minutes against hours to rebuild.
+up populated in one pass. After a deallocation wipes `/datadisk`, `prepare` and `serve`
+both notice the fast copy is gone and rsync the durable one back rather than rebuilding —
+minutes instead of hours. There is no separate restore service; it is the same question
+the builder already answers.
 
 Both bottlenecks are real and independent: moving the index to NVMe took a short query
 from 6.65s to 1.24s, while a long natural-language query was unaffected at 5.66s until

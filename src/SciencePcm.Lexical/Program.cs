@@ -49,6 +49,14 @@ public static class Program
             return 0;
         }
 
+        // Lets a caller ask about a particular copy of the index without building one,
+        // which is how the fast NVMe copy and the durable copy are compared.
+        if (options.Verify)
+        {
+            Console.WriteLine($"index at {options.Output} is stale or absent");
+            return 3;
+        }
+
         Console.WriteLine($"input   : {options.Input}");
         Console.WriteLine($"schema  : {options.Schema}");
         if (options.Metadata is not null) Console.WriteLine($"metadata: {options.Metadata}");
@@ -301,6 +309,7 @@ public sealed class BuildOptions
     public double RamBufferMb { get; private set; } = 512;
     public bool Optimize { get; private set; }
     public bool RequireBody { get; private set; }
+    public bool Verify { get; private set; }
     public long? Limit { get; private set; }
 
     public static BuildOptions Parse(string[] args)
@@ -329,6 +338,7 @@ public sealed class BuildOptions
                 case "--ram-buffer": options.RamBufferMb = double.Parse(Next()); break;
                 case "--optimize": options.Optimize = true; break;
                 case "--require-body": options.RequireBody = true; break;
+                case "--verify": options.Verify = true; break;
                 case "--limit": options.Limit = long.Parse(Next()); break;
                 default: throw new ArgumentException($"Unknown argument '{args[i]}'.");
             }

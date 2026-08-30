@@ -46,6 +46,27 @@ has_index() {
     [[ -f "$INDEX/$STAMP" ]]
 }
 
+index_current() {
+    dotnet run --project "$REPO/src/OpenAlex.Index" -c Release -- \
+        build --input "$ABSTRACTS/*.parquet" --schema openalex --out "$1" --verify \
+        >/dev/null 2>&1
+}
+
+# Brings the NVMe copy level with the durable one. Returns non-zero when it cannot, so
+# the caller knows a build is still needed.
+restore() {
+    (( FAST_AVAILABLE )) || return 1
+    if index_current "$FAST_INDEX"; then
+        echo "index on $FAST_ROOT is current"
+        return 0
+    fi
+    index_current "$DURABLE_INDEX" || return 1
+
+    echo "restoring index from $DURABLE_INDEX to $FAST_INDEX"
+    mkdir -p "$FAST_INDEX"
+    rsync -a --delete --info=stats2 "$DURABLE_INDEX/" "$FAST_INDEX/"
+}
+
 free_gb() {
     df -B1G --output=avail "$1" 2>/dev/null | tail -1 | tr -d ' '
 }
@@ -71,8 +92,7 @@ check() {
     [[ -x "$SYNC_PYTHON" ]] || { echo "sync Python missing: $SYNC_PYTHON" >&2; return 1; }
     [[ -x "$LAB_PYTHON" ]] || { echo "lab Python missing: $LAB_PYTHON" >&2; return 1; }
     [[ -n "${CLOUDPDS_CLIENT_HASH:-${legopds_clienthash:-}}" ]] || {
-        echo "CLOUDPDS_CLIENT_HASH/legopds_clienthash is unset" >&2
-        return 1
+        echo "warning: CLOUDPDS_CLIENT_HASH/legopds_clienthash is unset; the digest cannot be refreshed" >&2
     }
 }
 
@@ -82,8 +102,13 @@ prepare() {
     (( FAST_AVAILABLE )) && mkdir -p "$FAST_ROOT/openalex-data/index"
 
     echo "pulling OpenAlex abstract digest (skips files already present and unchanged)"
-    env -u MAXCORES "$SYNC_PYTHON" "$REPO/tools/openalex-cloudstore.py" \
-        pull --local "$DATA_ROOT"
+    if ! env -u MAXCORES "$SYNC_PYTHON" "$REPO/tools/openalex-cloudstore.py" \
+            pull --local "$DATA_ROOT"; then
+        # At boot the cloud may be unreachable or the credentials absent. An existing
+        # digest is enough to bring the service back up.
+        has_abstracts || { echo "pull failed and there is no local digest" >&2; exit 1; }
+        echo "pull failed; continuing with the digest already on disk"
+    fi
 
     has_abstracts || {
         echo "pull completed without a report and Parquet shards under $ABSTRACTS" >&2
@@ -105,21 +130,27 @@ prepare() {
     dotnet build "$REPO/src/OpenAlex.Server/OpenAlex.Server.csproj" \
         -c Release -p:UseGpu=true --nologo
 
-    # The builder compares a stamp of the source files and schema version against the
-    # one beside the index, and returns immediately when they match. Rebuilding is its
-    # decision, not ours, so prepare is safe to run whenever.
     rm -rf "$RETIRED_MODEL"
-    mkdir -p "$INDEX"
-    dotnet run --project "$REPO/src/OpenAlex.Index" -c Release -- \
-        build --input "$ABSTRACTS/*.parquet" --schema openalex \
-        --out "$INDEX" --threads 16 --ram-buffer 4096
 
-    # /datadisk is wiped when the VM deallocates, so the NVMe copy is only ever a working
-    # copy. datadisk-restore.service syncs this durable one back at boot.
-    if (( FAST_AVAILABLE )) && [[ "$INDEX" == "$FAST_INDEX" ]]; then
-        echo "mirroring index to the durable disk"
-        mkdir -p "$DURABLE_INDEX"
-        rsync -a --delete --info=stats2 "$FAST_INDEX/" "$DURABLE_INDEX/"
+    # Three cases, cheapest first. The builder answers "is the index at this path current"
+    # for either disk, so restoring the wiped NVMe copy and rebuilding after a new digest
+    # are the same decision rather than two services.
+    if restore; then
+        :
+    elif index_current "$INDEX"; then
+        echo "index is current"
+    else
+        mkdir -p "$INDEX"
+        dotnet run --project "$REPO/src/OpenAlex.Index" -c Release -- \
+            build --input "$ABSTRACTS/*.parquet" --schema openalex \
+            --out "$INDEX" --threads 16 --ram-buffer 4096
+
+        # /datadisk is wiped on deallocate, so the NVMe copy is only ever a working copy.
+        if (( FAST_AVAILABLE )) && [[ "$INDEX" == "$FAST_INDEX" ]]; then
+            echo "mirroring index to the durable disk"
+            mkdir -p "$DURABLE_INDEX"
+            rsync -a --delete --info=stats2 "$FAST_INDEX/" "$DURABLE_INDEX/"
+        fi
     fi
 
     echo "OpenAlex A100 preparation complete. Run: bash tools/openalex-a100.sh serve"
@@ -141,7 +172,8 @@ serve() {
 case "$COMMAND" in
     check) check ;;
     prepare) prepare ;;
+    restore) restore ;;
     # Anything after 'serve' goes to the server, e.g. serve --citation-prior 2.0
-    serve) shift; serve "$@" ;;
-    *) echo "Usage: $0 [check|prepare|serve [server args...]]" >&2; exit 2 ;;
+    serve) shift; restore || true; serve "$@" ;;
+    *) echo "Usage: $0 [check|prepare|restore|serve [server args...]]" >&2; exit 2 ;;
 esac

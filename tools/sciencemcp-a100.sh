@@ -12,9 +12,9 @@ FAST_ROOT="${SCIENCEPCM_FAST_ROOT:-/datadisk}"
 MODEL="$DATA_ROOT/models/bge-reranker"
 PORT="${SCIENCEPCM_PORT:-8080}"
 
-# /datadisk is local NVMe and ephemeral; the managed disk holds the durable copy that
-# datadisk-restore.sh syncs across at boot.
-if [[ -d "$FAST_ROOT/sciencepcm-data/index" ]]; then
+# Chosen by whether the fast disk is usable, not by whether the index is already there:
+# /datadisk is empty after a deallocation and restore() is what fills it.
+if [[ -d "$FAST_ROOT" && -w "$FAST_ROOT" ]]; then
     INDEX_ROOT="$FAST_ROOT/sciencepcm-data/index"
 else
     INDEX_ROOT="$DATA_ROOT/index"
@@ -22,10 +22,47 @@ fi
 
 ABSTRACTS_INDEX="$INDEX_ROOT/abstracts-bm25"
 PASSAGE_INDEX="$INDEX_ROOT/passages-bm25"
+CORPUS="${SCIENCEPCM_CORPUS:-$DATA_ROOT/sciencepcm}"
 COMMAND="${1:-serve}"
 
 size_of() {
     [[ -e "$1" ]] && du -sh "$1" 2>/dev/null | cut -f1 || echo "-"
+}
+
+index_current() {
+    local out="$1" schema="$2" glob="$3" metadata="${4:-}"
+    local metadata_args=()
+    [[ -n "$metadata" ]] && metadata_args=(--metadata "$metadata")
+    ( cd "$REPO" && dotnet run --project src/SciencePcm.Lexical -c Release -- \
+        build --input "$glob" "${metadata_args[@]}" --schema "$schema" --out "$out" --verify \
+        >/dev/null 2>&1 )
+}
+
+# /datadisk is wiped when the VM deallocates. Restoring the durable copy and rebuilding
+# after new data are the same question - is the index at this path current - so prepare
+# answers both rather than leaving a separate restore service to run at boot.
+restore() {
+    [[ "$INDEX_ROOT" == "$DATA_ROOT/index" ]] && { echo "no fast disk; serving from $INDEX_ROOT"; return 0; }
+
+    local pairs=(
+        "abstracts-bm25|abstracts|$CORPUS/abstracts/*.parquet|"
+        "passages-bm25|chunks|$CORPUS/passages-2019-2025/chunks-part-*.parquet|$CORPUS/passages-2019-2025/articles-part-*.parquet"
+    )
+
+    for pair in "${pairs[@]}"; do
+        IFS='|' read -r name schema glob metadata <<< "$pair"
+        local fast="$INDEX_ROOT/$name" durable="$DATA_ROOT/index/$name"
+        [[ -d "$durable" ]] || continue
+
+        if index_current "$fast" "$schema" "$glob" "$metadata"; then
+            echo "$name is current on $FAST_ROOT"
+            continue
+        fi
+
+        echo "restoring $name from $durable"
+        mkdir -p "$fast"
+        rsync -a --delete --info=stats2 "$durable/" "$fast/"
+    done
 }
 
 stamp_of() {
@@ -62,9 +99,10 @@ serve() {
 
 case "$COMMAND" in
     check) check ;;
-    prepare) exec bash "$REPO/tools/gcr-prep.sh" "${@:2}" ;;
-    restore) exec bash "$REPO/tools/datadisk-restore.sh" ;;
+    # gcr-prep builds into the durable copy; restore then brings the NVMe copy level.
+    prepare) bash "$REPO/tools/gcr-prep.sh" "${@:2}" && restore ;;
+    restore) restore ;;
     # Anything after 'serve' goes to the server, e.g. serve --rerank-candidates 200
-    serve) shift; serve "$@" ;;
+    serve) shift; restore; serve "$@" ;;
     *) echo "Usage: $0 [check|prepare|restore|serve [server args...]]" >&2; exit 2 ;;
 esac

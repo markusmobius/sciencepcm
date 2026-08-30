@@ -1,7 +1,7 @@
 # OpenAlex MCP server (GPU box). Second service, same box, own port and token.
 #
-# datadisk-restore.service already names this unit in its Before=, so the index is on
-# the NVMe before this starts.
+# serve restores the NVMe index copy first when /datadisk has been wiped, so there is no
+# separate restore unit to order against.
 #
 # Install:
 #   cd ~/sciencepcm && bash tools/openalex-a100.sh prepare   # digest + model + index
@@ -20,8 +20,7 @@
 
 [Unit]
 Description = openalex-server
-After = network.target datadisk-restore.service
-Requires = datadisk-restore.service
+After = network.target
 
 [Service]
 Type=simple

@@ -17,8 +17,7 @@
 
 [Unit]
 Description = mcp-server
-After = network.target datadisk-restore.service
-Requires = datadisk-restore.service
+After = network.target
 
 [Service]
 Type=simple
