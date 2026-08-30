@@ -140,6 +140,9 @@ prepare() {
     elif index_current "$INDEX"; then
         echo "index is current"
     else
+        # Removed first, not overwritten: Lucene's CREATE mode does not free the old
+        # segments until it commits, so an in-place rebuild needs room for two copies.
+        rm -rf "$INDEX"
         mkdir -p "$INDEX"
         dotnet run --project "$REPO/src/OpenAlex.Index" -c Release -- \
             build --input "$ABSTRACTS/*.parquet" --schema openalex \

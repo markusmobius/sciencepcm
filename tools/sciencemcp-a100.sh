@@ -66,6 +66,9 @@ prepare() {
         fi
 
         echo "building $name"
+        # Removed first, not overwritten: Lucene's CREATE mode does not free the old
+        # segments until it commits, so an in-place rebuild needs room for two copies.
+        rm -rf "$fast"
         mkdir -p "$fast"
         ( cd "$REPO" && dotnet run --project src/SciencePcm.Lexical -c Release -- build \
             --input "$glob" "${metadata_args[@]}" --schema "$schema" --out "$fast" \
