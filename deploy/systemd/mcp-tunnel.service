@@ -1,9 +1,7 @@
 # Reverse SSH tunnel from the GPU box to the public relay.
 #
-# Install:
-#   sudo cp deploy/systemd/mcp-tunnel.service /etc/systemd/system/
-#   sudo systemctl daemon-reload
-#   sudo systemctl enable --now mcp-tunnel
+# Install with tools/gcr-prep.sh, which rewrites User= and the /home/mobius paths for
+# this account before copying.
 #
 # Check on it:
 #   systemctl status mcp-tunnel

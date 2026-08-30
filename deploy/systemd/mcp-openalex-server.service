@@ -3,19 +3,15 @@
 # mcp-prepare.service restores or rebuilds the indexes first, and runs the two services'
 # prepare steps in sequence so they do not compete for the managed disk.
 #
-# Install:
-#   cd ~/sciencepcm && bash tools/openalex-a100.sh prepare   # digest + model + index
-#   sudo cp deploy/systemd/mcp-openalex-server.service /etc/systemd/system/
-#   sudoedit /etc/systemd/system/mcp-openalex-server.service  # set the token
-#   sudo systemctl daemon-reload
-#   sudo systemctl enable --now mcp-openalex-server
+# Install with tools/gcr-prep.sh, which asks for the token and rewrites User= and the
+# /home/mobius paths for this account before copying. A domain login is often
+# mobius@microsoft.com while $HOME stays /home/mobius, and a User= systemd cannot
+# resolve fails the unit with 217/USER. Copying this file by hand skips that.
 #
 # Check on it:
 #   systemctl status mcp-openalex-server
 #   journalctl -u mcp-openalex-server -f
 #   curl -s localhost:8081/health
-#
-# Adjust User= and the /home/mobius paths if the box differs.
 
 [Unit]
 Description = mcp-openalex-server

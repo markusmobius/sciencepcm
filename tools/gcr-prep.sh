@@ -226,6 +226,7 @@ step "Services"
 SYSTEMD_DIR=/etc/systemd/system
 # mcp-console.service is missing on purpose: it runs on the relay, not on this box.
 UNITS=(mcp-prepare.service mcp-science-server.service mcp-openalex-server.service mcp-tunnel.service)
+RUN_USER="$(id -un)"
 
 TOKEN=""
 
@@ -264,14 +265,16 @@ install_unit() {
     local unit=$1 var=${2:-} tmp
     tmp="$(mktemp)"
     trap 'rm -f "$tmp"' RETURN
-    if [[ -n "$var" ]]; then
-        # Token via the environment, not -v: awk's argv is visible in ps.
-        UNIT_TOKEN="$TOKEN" awk -v var="$var" '
-            $0 ~ "^Environment=\"?" var "=" { printf "Environment=\"%s=%s\"\n", var, ENVIRON["UNIT_TOKEN"]; next }
-            { print }' "$REPO/deploy/systemd/$unit" > "$tmp"
-    else
-        cat "$REPO/deploy/systemd/$unit" > "$tmp"
-    fi
+    # User= and the paths are rewritten for this account: a domain login can be
+    # mobius@microsoft.com with $HOME still /home/mobius, and a User= systemd cannot
+    # resolve fails the unit with 217/USER before anything runs.
+    # Token via the environment, not -v: awk's argv is visible in ps.
+    UNIT_TOKEN="$TOKEN" awk -v var="$var" -v user="$RUN_USER" \
+                             -v repo="$REPO" -v root="$MCP_ROOT" -v home="$HOME" '
+        { gsub("/home/mobius/sciencepcm", repo); gsub("/home/mobius/mcp", root); gsub("/home/mobius", home) }
+        /^User=/ { print "User=" user; next }
+        var != "" && $0 ~ "^Environment=\"?" var "=" { printf "Environment=\"%s=%s\"\n", var, ENVIRON["UNIT_TOKEN"]; next }
+        { print }' "$REPO/deploy/systemd/$unit" > "$tmp"
     sudo install -m 600 -o root -g root "$tmp" "$SYSTEMD_DIR/$unit"
     info "installed $unit"
 }
@@ -279,6 +282,9 @@ install_unit() {
 SERVICES_INSTALLED=0
 FRESH=0
 for u in "${UNITS[@]}"; do [[ -e "$SYSTEMD_DIR/$u" ]] || FRESH=1; done
+
+info "will run as : $RUN_USER"
+info "repo        : $REPO"
 
 if [[ $CHECK_ONLY -eq 1 ]]; then
     for u in "${UNITS[@]}"; do
@@ -355,8 +361,9 @@ cat <<EOF
     sudo cp deploy/systemd/mcp-{prepare,science-server,openalex-server,tunnel}.service \\
             $SYSTEMD_DIR/
 
-  Set the tokens in the installed copies - the ones in the repo are empty on purpose,
-  and an empty token starts the server unauthenticated:
+  Copied by hand they still say User=mobius, which fails with 217/USER on this box.
+  Set User=$RUN_USER and the tokens in the installed copies - the ones in the repo
+  are empty on purpose, and an empty token starts the server unauthenticated:
     sudoedit $SYSTEMD_DIR/mcp-science-server.service    # SCIENCEPCM_TOKEN=
     sudoedit $SYSTEMD_DIR/mcp-openalex-server.service   # OPENALEX_TOKEN=
 

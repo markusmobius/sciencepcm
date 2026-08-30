@@ -57,6 +57,12 @@ token without echoing it, writes the units `root:root` mode 600, and enables the
 without starting them. Re-running refreshes the units from the repo and prompts again;
 press Enter twice to keep the tokens that are already installed.
 
+It also rewrites `User=` and the `/home/mobius` paths for the account running it. That
+matters on a domain-joined box, where the login is `mobius@microsoft.com` while `$HOME`
+is still `/home/mobius`: a `User=` systemd cannot resolve fails the unit before anything
+runs, with `status=217/USER` and `Failed to determine user credentials`. Copying the
+units by hand skips the rewrite.
+
 `mcp-console.service` is deliberately not installed here — it runs on the relay.
 
 Start them when you are ready for the rebuild:
