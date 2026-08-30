@@ -4,10 +4,9 @@
 # prepare steps in sequence so they do not compete for the managed disk.
 #
 # Install:
-#   cd ~/sciencepcm && bash tools/gcr-prep.sh          # models + indexes first
-#   echo 'SCIENCEPCM_TOKEN=your-long-random-string' | sudo tee /etc/sciencepcm.env
-#   sudo chmod 600 /etc/sciencepcm.env
+#   cd ~/sciencepcm && bash tools/gcr-prep.sh
 #   sudo cp deploy/systemd/mcp-science-server.service /etc/systemd/system/
+#   sudoedit /etc/systemd/system/mcp-science-server.service   # set the token
 #   sudo systemctl daemon-reload
 #   sudo systemctl enable --now mcp-science-server
 #
@@ -28,13 +27,13 @@ User=mobius
 
 WorkingDirectory=/home/mobius/sciencepcm
 
-# The token lives outside the repo. "-" means start anyway if the file is absent,
-# in which case the server runs unauthenticated and says so at startup.
-EnvironmentFile=-/etc/sciencepcm.env
+# Set in the installed copy under /etc/systemd/system, not here - editing this file
+# would commit the token. Left empty the server starts unauthenticated and says so.
+Environment=SCIENCEPCM_TOKEN=
 
 # bash -lc, not ExecStart directly: env.sh exports the CUDA 12 and cuDNN 9 library
 # paths ONNX Runtime needs, and it is a shell script rather than a systemd-style
-# KEY=VALUE EnvironmentFile.
+# KEY=VALUE environment assignment.
 ExecStart=/bin/bash -lc 'source /home/mobius/mcp/env.sh && exec bash tools/sciencemcp-a100.sh serve'
 
 Restart=on-failure

@@ -5,18 +5,27 @@ Day-to-day running of both services. Provisioning a fresh box is
 
 ## Tokens
 
-Each service has its own bearer token, handed out independently.
+Each service has its own bearer token, handed out independently. They live in the
+installed unit files, not in the repo:
 
 ```bash
-printf 'SCIENCEPCM_TOKEN=%s\n' "$(openssl rand -hex 32)" | sudo tee /etc/sciencepcm.env
-printf 'OPENALEX_TOKEN=%s\n'   "$(openssl rand -hex 32)" | sudo tee /etc/openalex.env
-sudo chmod 600 /etc/sciencepcm.env /etc/openalex.env
+sudo cp deploy/systemd/*.service /etc/systemd/system/
+sudoedit /etc/systemd/system/mcp-science-server.service     # Environment=SCIENCEPCM_TOKEN=...
+sudoedit /etc/systemd/system/mcp-openalex-server.service    # Environment=OPENALEX_TOKEN=...
+sudo systemctl daemon-reload
 ```
 
-systemd `KEY=VALUE` format — no `export`, no quotes. Both units reference these with a
-leading `-`, so a missing file is not fatal: the server starts unauthenticated and says
-so at startup. `/health` never needs a token, which is what separates "unreachable" from
-"wrong token" when debugging.
+Use the values your existing clients already send. Generating fresh ones breaks every
+configured client at once.
+
+Left empty, a server starts unauthenticated and prints `auth: OPEN - no
+SCIENCEPCM_TOKEN set`. Check that line after a restart — an empty value looks exactly
+like a working one until someone reaches the endpoint without a token. `/health` never
+needs a token, which is what separates "unreachable" from "wrong token" when debugging.
+
+Unit files under `/etc/systemd/system` are world-readable by default; `sudo chmod 600`
+them if that matters on this box. Running by hand instead of under systemd, the servers
+read the same variables from the shell, or take `--token`.
 
 ## Running
 
