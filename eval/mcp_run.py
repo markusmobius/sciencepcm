@@ -126,7 +126,7 @@ def load_queries(path: Path, limit: int | None) -> list[dict]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--endpoint", required=True, help="e.g. https://www.sciencemcp.econlabs.org/mcp")
-    parser.add_argument("--token", help="Bearer token. Falls back to $SCIENCEPCM_TOKEN.")
+    parser.add_argument("--token", help="Bearer token. Falls back to $OPENALEX_TOKEN or $SCIENCEPCM_TOKEN.")
     parser.add_argument("--queries", required=True, type=Path)
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--tool", default="search_literature")
@@ -145,7 +145,7 @@ def main() -> int:
     args = parser.parse_args()
 
     import os
-    token = args.token or os.getenv("SCIENCEPCM_TOKEN")
+    token = args.token or os.getenv("OPENALEX_TOKEN") or os.getenv("SCIENCEPCM_TOKEN")
 
     queries = load_queries(args.queries, args.limit)
     print(f"endpoint : {args.endpoint}")
