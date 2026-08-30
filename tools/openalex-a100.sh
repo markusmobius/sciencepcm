@@ -101,6 +101,12 @@ prepare() {
         "$LAB_PYTHON" "$REPO/tools/export_onnx.py" \
             --out "$MCP_ROOT/models" \
             --reranker BAAI/bge-reranker-v2-m3
+
+        # A tokenizer that disagrees with HuggingFace degrades retrieval silently, so
+        # this runs where the export happens rather than as a separate step elsewhere.
+        [[ -f "$MODEL/tokenizer-parity.json" ]] && \
+            ( cd "$REPO" && dotnet run --project src/SciencePcm.Embed -c Release -- \
+                --model "$MODEL" --verify-pairs "$MODEL/tokenizer-parity.json" )
     else
         echo "reranker already present"
     fi

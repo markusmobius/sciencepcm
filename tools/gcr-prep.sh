@@ -27,14 +27,13 @@ MODELS="$MCP_ROOT/models"
 DOTNET_CHANNEL="10.0"
 
 CHECK_ONLY=0
-SKIP_BUILD=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --check)       CHECK_ONLY=1 ;;
-        --skip-build)  SKIP_BUILD=1 ;;
-        # Data, models and indexes moved into each service's prepare.
-        --skip-pull|--force-pull|--skip-models|--skip-index|--force-index|--with-medcpt)
+        # Data, models and indexes moved into each service's prepare. --skip-build went
+        # with --no-build: dotnet run rebuilds anyway, so skipping here only hides errors.
+        --skip-pull|--force-pull|--skip-models|--skip-index|--force-index|--with-medcpt|--skip-build)
                        echo "$1 is gone; see tools/{sciencemcp,openalex}-a100.sh prepare" >&2 ;;
         -h|--help)     sed -n '2,15p' "${BASH_SOURCE[0]}"; exit 0 ;;
         *)             echo "Unknown argument: $1" >&2; exit 1 ;;
@@ -200,27 +199,11 @@ fi
 
 step "Build"
 
-if [[ $SKIP_BUILD -eq 1 ]]; then
-    warn "skipped"
-elif [[ $CHECK_ONLY -eq 1 ]]; then
+if [[ $CHECK_ONLY -eq 1 ]]; then
     warn "would build with -p:UseGpu=true"
 else
     ( cd "$REPO" && dotnet build -c Release -p:UseGpu=true --nologo -v q )
     info "built with the CUDA execution provider"
-fi
-
-# ---------------------------------------------------------------- verify
-
-step "Tokenizer parity"
-
-parity="$MODELS/medcpt-article/tokenizer-parity.json"
-if [[ $CHECK_ONLY -eq 1 || $SKIP_BUILD -eq 1 ]]; then
-    warn "skipped"
-elif [[ -f "$parity" ]]; then
-    ( cd "$REPO" && dotnet run --project src/SciencePcm.Embed -c Release -p:UseGpu=true -- \
-        --model "$MODELS/medcpt-article" --verify-tokenizer "$parity" )
-else
-    warn "no parity file at $parity"
 fi
 
 # ---------------------------------------------------------------- summary
