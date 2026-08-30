@@ -1,6 +1,6 @@
 # Retrieval
 
-Both services share one engine: `src/SciencePcm.Lexical/LexicalIndex.cs` for the index
+Both services share one engine: `src/SciencePcm.Index/LexicalIndex.cs` for the index
 and query, `src/SciencePcm.Server/RetrievalService.cs` for the pipeline. A query is BM25F
 over a fielded Lucene index, then a `bge-reranker-v2-m3` cross-encoder over the top 100.
 

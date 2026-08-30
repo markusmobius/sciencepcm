@@ -1,7 +1,7 @@
 using System.ComponentModel;
 using System.Text.Json;
 using ModelContextProtocol.Server;
-using SciencePcm.Lexical;
+using SciencePcm.Index;
 using SciencePcm.Server;
 
 namespace OpenAlex.Server;

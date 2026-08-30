@@ -70,12 +70,12 @@ goes with the disk.
 src/SciencePcm.Core       JATS parsing and chunking
 src/SciencePcm.Ingest     JATS -> Parquet
 src/SciencePcm.Embed      ONNX inference, tokenizers, cross-encoders
-src/SciencePcm.Lexical    the Lucene index and query, shared by both servers
+src/SciencePcm.Index      the Lucene index and query, shared by both servers
 src/SciencePcm.Server     ScienceMCP retrieval service and MCP tools
 src/OpenAlex.*            OpenAlex ingest, index and server
 src/SciencePcm.Inspector  the browser console
 eval/                     retrieval measurement, LLM judge, known-item tests
 ```
 
-`src/SciencePcm.Lexical/LexicalIndex.cs` is the piece worth reading first: both services
+`src/SciencePcm.Index/LexicalIndex.cs` is the piece worth reading first: both services
 share its schema, its query construction and its scoring.

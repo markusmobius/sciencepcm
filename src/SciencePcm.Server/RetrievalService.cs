@@ -1,6 +1,6 @@
 using Microsoft.ML.OnnxRuntime;
 using SciencePcm.Embed;
-using SciencePcm.Lexical;
+using SciencePcm.Index;
 
 namespace SciencePcm.Server;
 

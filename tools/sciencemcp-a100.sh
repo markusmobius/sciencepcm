@@ -33,7 +33,7 @@ index_current() {
     local out="$1" schema="$2" glob="$3" metadata="${4:-}"
     local metadata_args=()
     [[ -n "$metadata" ]] && metadata_args=(--metadata "$metadata")
-    ( cd "$REPO" && dotnet run --project src/SciencePcm.Lexical -c Release -- \
+    ( cd "$REPO" && dotnet run --project src/SciencePcm.Index -c Release -- \
         build --input "$glob" "${metadata_args[@]}" --schema "$schema" --out "$out" --verify \
         >/dev/null 2>&1 )
 }
@@ -85,7 +85,7 @@ prepare() {
         # segments until it commits, so an in-place rebuild needs room for two copies.
         rm -rf "$out"
         mkdir -p "$out"
-        ( cd "$REPO" && dotnet run --project src/SciencePcm.Lexical -c Release -- build \
+        ( cd "$REPO" && dotnet run --project src/SciencePcm.Index -c Release -- build \
             --input "$glob" "${metadata_args[@]}" --schema "$schema" --out "$out" \
             --threads "$(nproc)" --ram-buffer 2048 )
     done

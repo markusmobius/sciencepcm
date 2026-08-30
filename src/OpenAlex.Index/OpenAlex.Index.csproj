@@ -10,7 +10,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\SciencePcm.Lexical\SciencePcm.Lexical.csproj" />
+    <ProjectReference Include="..\SciencePcm.Index\SciencePcm.Index.csproj" />
   </ItemGroup>
 
 </Project>

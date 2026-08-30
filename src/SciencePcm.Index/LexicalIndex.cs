@@ -9,7 +9,7 @@ using Lucene.Net.Store;
 using Lucene.Net.Util;
 using SciencePcm.Embed;
 
-namespace SciencePcm.Lexical;
+namespace SciencePcm.Index;
 
 public sealed record LexicalHit(
     string Id,

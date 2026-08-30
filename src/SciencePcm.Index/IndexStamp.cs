@@ -3,7 +3,7 @@ using System.Text;
 using System.Text.Json;
 using SciencePcm.Embed;
 
-namespace SciencePcm.Lexical;
+namespace SciencePcm.Index;
 
 /// <summary>
 /// What an index was built from, written beside it so a rebuild can be skipped.
