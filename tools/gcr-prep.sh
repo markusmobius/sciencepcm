@@ -24,6 +24,7 @@ MCP_ROOT="${MCP_ROOT:-$HOME/mcp}"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VENVS="$MCP_ROOT/venvs"
 MODELS="$MCP_ROOT/models"
+TEMP_NETCORE="${TEMP_NETCORE:-$HOME/temp_netcore}"
 DOTNET_CHANNEL="10.0"
 
 CHECK_ONLY=0
@@ -182,17 +183,26 @@ CUDA_LIBS="$(cuda_lib_path)"
 if [[ -n "$CUDA_LIBS" ]]; then
     export LD_LIBRARY_PATH="$CUDA_LIBS${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
     info "LD_LIBRARY_PATH set for this run"
+fi
 
-    # Interactive shells need the same paths for manual dotnet runs.
-    if [[ $CHECK_ONLY -eq 0 ]]; then
-        cat > "$MCP_ROOT/env.sh" <<EOF
-# Source before running SciencePcm.Embed with --gpu:
+# Written even without CUDA: every serve script and systemd unit sources this file, so
+# a missing one stops the servers starting rather than merely losing GPU support.
+if [[ $CHECK_ONLY -eq 0 ]]; then
+    mkdir -p "$TEMP_NETCORE"
+    cat > "$MCP_ROOT/env.sh" <<EOF
+# Sourced by tools/*-a100.sh and by every systemd unit.
 #   source $MCP_ROOT/env.sh
 export PATH="\$HOME/.dotnet:\$HOME/.local/bin:\$PATH"
+export TEMP_NETCORE="$TEMP_NETCORE"
+EOF
+    if [[ -n "$CUDA_LIBS" ]]; then
+        cat >> "$MCP_ROOT/env.sh" <<EOF
 export LD_LIBRARY_PATH="$CUDA_LIBS\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
 EOF
-        info "wrote $MCP_ROOT/env.sh"
+    else
+        warn "no CUDA libraries found; env.sh written without LD_LIBRARY_PATH"
     fi
+    info "wrote $MCP_ROOT/env.sh"
 fi
 
 # ---------------------------------------------------------------- build
