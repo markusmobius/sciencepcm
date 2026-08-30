@@ -237,7 +237,15 @@ cat <<EOF
   Expose them (relay holds the public TLS endpoint):
     ./tools/mcp-tunnel.sh
 
-  Or install both as services:
-    sudo cp deploy/systemd/*.service /etc/systemd/system/
-    sudo systemctl daemon-reload && sudo systemctl enable --now mcp-prepare mcp-science-server mcp-tunnel
+  Or install them as services (not mcp-console.service - that one runs on the relay):
+    sudo cp deploy/systemd/mcp-{prepare,science-server,openalex-server,tunnel}.service \\
+            /etc/systemd/system/
+
+  Set the tokens in the installed copies - the ones in the repo are empty on purpose,
+  and an empty token starts the server unauthenticated:
+    sudoedit /etc/systemd/system/mcp-science-server.service    # SCIENCEPCM_TOKEN=
+    sudoedit /etc/systemd/system/mcp-openalex-server.service   # OPENALEX_TOKEN=
+
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now mcp-prepare mcp-science-server mcp-openalex-server mcp-tunnel
 EOF

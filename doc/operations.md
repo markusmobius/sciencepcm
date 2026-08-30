@@ -9,11 +9,14 @@ Each service has its own bearer token, handed out independently. They live in th
 installed unit files, not in the repo:
 
 ```bash
-sudo cp deploy/systemd/*.service /etc/systemd/system/
+sudo cp deploy/systemd/mcp-{prepare,science-server,openalex-server,tunnel}.service \
+        /etc/systemd/system/
 sudoedit /etc/systemd/system/mcp-science-server.service     # Environment=SCIENCEPCM_TOKEN=...
 sudoedit /etc/systemd/system/mcp-openalex-server.service    # Environment=OPENALEX_TOKEN=...
 sudo systemctl daemon-reload
 ```
+
+`mcp-console.service` is deliberately not in that list — it runs on the relay.
 
 Use the values your existing clients already send. Generating fresh ones breaks every
 configured client at once.
@@ -47,8 +50,9 @@ Both scripts pass anything after `serve` to the server, e.g.
 
 ## As services
 
+Copy the units and set the tokens as above, then:
+
 ```bash
-sudo cp deploy/systemd/*.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable mcp-prepare
 sudo systemctl enable --now mcp-science-server mcp-openalex-server mcp-tunnel
