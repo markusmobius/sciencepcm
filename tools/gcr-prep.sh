@@ -306,36 +306,15 @@ fi
 step "Search indexes"
 
 # Both are BM25 over Lucene. Nothing here needs the GPU; the cross-encoder is only
-# used at query time.
-build_index() {
-    local name="$1" schema="$2" glob="$3" metadata="${4:-}"
-    local out="$INDEXES/$name"
-    local metadata_args=()
-    if [[ -n "$metadata" ]]; then
-        metadata_args=(--metadata "$metadata")
-    fi
-
-    if [[ $SKIP_INDEX -eq 1 || $SKIP_BUILD -eq 1 ]]; then
-        warn "$(printf '%-22s' "$name") skipped"
-        return
-    fi
-    if [[ $CHECK_ONLY -eq 1 ]]; then
-        warn "$(printf '%-22s' "$name") would build from $glob"
-        return
-    fi
-
-    # No "already built" guard here: the builder compares index-stamp.json against the
-    # source shards and the schema version, and returns in seconds when they match.
-    info "$(printf '%-22s' "$name") checking ..."
-    ( cd "$REPO" && dotnet run --project src/SciencePcm.Lexical -c Release -- build \
-        --input "$glob" "${metadata_args[@]}" --schema "$schema" --out "$out" \
-        --threads "$(nproc)" --ram-buffer 2048 )
-}
-
-mkdir -p "$INDEXES"
-build_index "abstracts-bm25" "abstracts" "$CORPUS/abstracts/*.parquet"
-build_index "passages-bm25"  "chunks"    "$CORPUS/passages-2019-2025/chunks-part-*.parquet" \
-    "$CORPUS/passages-2019-2025/articles-part-*.parquet"
+# used at query time. The index waterfall - keep, restore from the durable copy, or
+# rebuild - lives in sciencemcp-a100.sh so the corpus globs are defined once.
+if [[ $SKIP_INDEX -eq 1 || $SKIP_BUILD -eq 1 ]]; then
+    warn "search indexes         skipped"
+elif [[ $CHECK_ONLY -eq 1 ]]; then
+    warn "search indexes         would run: bash tools/sciencemcp-a100.sh prepare"
+else
+    bash "$REPO/tools/sciencemcp-a100.sh" prepare
+fi
 
 # ---------------------------------------------------------------- summary
 

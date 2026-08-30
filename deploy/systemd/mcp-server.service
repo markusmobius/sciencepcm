@@ -1,8 +1,7 @@
 # SciencePCM MCP server (GPU box).
 #
-# serve restores the NVMe index copies first when /datadisk has been wiped, under a
-# shared flock so it queues behind openalex-server's restore rather than competing with
-# it for the managed disk.
+# mcp-prepare.service restores or rebuilds the indexes first, and runs the two services'
+# prepare steps in sequence so they do not compete for the managed disk.
 #
 # Install:
 #   cd ~/sciencepcm && bash tools/gcr-prep.sh          # models + indexes first
@@ -21,7 +20,8 @@
 
 [Unit]
 Description = mcp-server
-After = network.target
+After = network.target mcp-prepare.service
+Requires = mcp-prepare.service
 
 [Service]
 Type=simple

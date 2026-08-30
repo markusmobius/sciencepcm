@@ -1,8 +1,7 @@
 # OpenAlex MCP server (GPU box). Second service, same box, own port and token.
 #
-# serve restores the NVMe index copy first when /datadisk has been wiped. Both services
-# restore from the same managed disk and take a shared flock, so they queue rather than
-# competing for its read bandwidth - which is why no ordering between the units is needed.
+# mcp-prepare.service restores or rebuilds the indexes first, and runs the two services'
+# prepare steps in sequence so they do not compete for the managed disk.
 #
 # Install:
 #   cd ~/sciencepcm && bash tools/openalex-a100.sh prepare   # digest + model + index
@@ -21,7 +20,8 @@
 
 [Unit]
 Description = openalex-server
-After = network.target
+After = network.target mcp-prepare.service
+Requires = mcp-prepare.service
 
 [Service]
 Type=simple

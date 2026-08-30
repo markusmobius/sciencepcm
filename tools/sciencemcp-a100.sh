@@ -23,7 +23,6 @@ fi
 ABSTRACTS_INDEX="$INDEX_ROOT/abstracts-bm25"
 PASSAGE_INDEX="$INDEX_ROOT/passages-bm25"
 CORPUS="${SCIENCEPCM_CORPUS:-$DATA_ROOT/sciencepcm}"
-RESTORE_LOCK="${TMPDIR:-/tmp}/sciencepcm-restore.lock"
 COMMAND="${1:-serve}"
 
 size_of() {
@@ -39,12 +38,10 @@ index_current() {
         >/dev/null 2>&1 )
 }
 
-# /datadisk is wiped when the VM deallocates. Restoring the durable copy and rebuilding
-# after new data are the same question - is the index at this path current - so prepare
-# answers both rather than leaving a separate restore service to run at boot.
-restore() {
-    [[ "$INDEX_ROOT" == "$DATA_ROOT/index" ]] && { echo "no fast disk; serving from $INDEX_ROOT"; return 0; }
-
+# Restoring the wiped NVMe copy and rebuilding after new data are the same question -
+# is the index at this path current - so one waterfall answers both. Cheapest branch
+# first: keep, restore, rebuild.
+prepare() {
     local pairs=(
         "abstracts-bm25|abstracts|$CORPUS/abstracts/*.parquet|"
         "passages-bm25|chunks|$CORPUS/passages-2019-2025/chunks-part-*.parquet|$CORPUS/passages-2019-2025/articles-part-*.parquet"
@@ -53,17 +50,32 @@ restore() {
     for pair in "${pairs[@]}"; do
         IFS='|' read -r name schema glob metadata <<< "$pair"
         local fast="$INDEX_ROOT/$name" durable="$DATA_ROOT/index/$name"
-        [[ -d "$durable" ]] || continue
+        local metadata_args=()
+        [[ -n "$metadata" ]] && metadata_args=(--metadata "$metadata")
 
         if index_current "$fast" "$schema" "$glob" "$metadata"; then
-            echo "$name is current on $FAST_ROOT"
+            echo "$name is current"
             continue
         fi
 
-        echo "restoring $name from $durable"
+        if [[ "$fast" != "$durable" ]] && index_current "$durable" "$schema" "$glob" "$metadata"; then
+            echo "restoring $name from $durable"
+            mkdir -p "$fast"
+            rsync -a --delete --info=stats2 "$durable/" "$fast/"
+            continue
+        fi
+
+        echo "building $name"
         mkdir -p "$fast"
-        # Serialised against the OpenAlex restore: both read from the same managed disk.
-        ( flock 9; rsync -a --delete --info=stats2 "$durable/" "$fast/" ) 9>"$RESTORE_LOCK"
+        ( cd "$REPO" && dotnet run --project src/SciencePcm.Lexical -c Release -- build \
+            --input "$glob" "${metadata_args[@]}" --schema "$schema" --out "$fast" \
+            --threads "$(nproc)" --ram-buffer 2048 )
+
+        if [[ "$fast" != "$durable" ]]; then
+            echo "mirroring $name to the durable disk"
+            mkdir -p "$durable"
+            rsync -a --delete --info=stats2 "$fast/" "$durable/"
+        fi
     done
 }
 
@@ -80,7 +92,7 @@ check() {
     echo "reranker       : $MODEL"
     echo "local port     : $PORT"
     command -v dotnet >/dev/null || { echo "dotnet is missing" >&2; return 1; }
-    [[ -d "$ABSTRACTS_INDEX" ]] || { echo "no abstracts index; run: bash tools/gcr-prep.sh" >&2; return 1; }
+    [[ -d "$ABSTRACTS_INDEX" ]] || { echo "no abstracts index; run: bash tools/sciencemcp-a100.sh prepare" >&2; return 1; }
     [[ -f "$MODEL/model.onnx" ]] || { echo "no reranker; run: bash tools/gcr-prep.sh" >&2; return 1; }
 }
 
@@ -101,10 +113,8 @@ serve() {
 
 case "$COMMAND" in
     check) check ;;
-    # gcr-prep builds into the durable copy; restore then brings the NVMe copy level.
-    prepare) bash "$REPO/tools/gcr-prep.sh" "${@:2}" && restore ;;
-    restore) restore ;;
+    prepare) prepare ;;
     # Anything after 'serve' goes to the server, e.g. serve --rerank-candidates 200
-    serve) shift; restore; serve "$@" ;;
-    *) echo "Usage: $0 [check|prepare|restore|serve [server args...]]" >&2; exit 2 ;;
+    serve) shift; serve "$@" ;;
+    *) echo "Usage: $0 [check|prepare|serve [server args...]]" >&2; exit 2 ;;
 esac

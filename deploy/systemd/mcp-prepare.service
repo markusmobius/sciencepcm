@@ -1,0 +1,42 @@
+# Prepares both MCP services before either starts.
+#
+# Runs the two prepare steps in sequence, not in parallel: after a deallocation both
+# restore their index from the same managed disk, and running them concurrently only
+# halves each one's read bandwidth. The server units Require= this, so they wait.
+#
+# Each prepare is a waterfall that decides for itself - digest already current, index
+# already current, restore the wiped NVMe copy, or rebuild - so this is cheap to run on
+# every boot and does nothing when nothing changed.
+#
+# Install:
+#   sudo cp deploy/systemd/mcp-prepare.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable mcp-prepare
+#
+# Check on it:
+#   systemctl status mcp-prepare
+#   journalctl -u mcp-prepare -f
+
+[Unit]
+Description = mcp-prepare
+After = local-fs.target network.target
+Before = mcp-server.service openalex-server.service
+
+[Service]
+Type=oneshot
+User=mobius
+RemainAfterExit=yes
+
+WorkingDirectory=/home/mobius/sciencepcm
+
+# Restoring or rebuilding hundreds of GB takes far longer than the default 90 second
+# start timeout.
+TimeoutStartSec=0
+
+# Two ExecStart lines in a oneshot unit run one after the other, which is the sequencing
+# this unit exists for.
+ExecStart=/bin/bash -lc 'source /home/mobius/sciencepcm-data/env.sh && bash tools/sciencemcp-a100.sh prepare'
+ExecStart=/bin/bash -lc 'source /home/mobius/sciencepcm-data/env.sh && bash tools/openalex-a100.sh prepare'
+
+[Install]
+WantedBy=multi-user.target
