@@ -9,7 +9,10 @@ set -euo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MCP_ROOT="${MCP_ROOT:-$HOME/mcp}"
 FAST_ROOT="${MCP_FAST_ROOT:-/datadisk}"
+SYNC_PYTHON="$MCP_ROOT/venvs/sync/bin/python"
+LAB_PYTHON="$MCP_ROOT/venvs/lab/bin/python"
 CORPUS="$MCP_ROOT/data/sciencepcm"
+# The same bge-reranker-v2-m3 export both services use.
 MODEL="$MCP_ROOT/models/bge-reranker"
 PORT="${SCIENCEPCM_PORT:-8080}"
 
@@ -38,6 +41,23 @@ index_current() {
 # Restoring and rebuilding collapse into one question - is the index at this path
 # current - now that there is only one path.
 prepare() {
+    check
+    mkdir -p "$MCP_ROOT/data" "$MCP_ROOT/models" "$INDEX_ROOT"
+
+    for name in abstracts passages-2019-2025 questions; do
+        echo "pulling sciencepcm/$name (transfers only what differs)"
+        "$SYNC_PYTHON" "$REPO/tools/cloudstore.py" pull-dir \
+            --cloud "sciencepcm/$name" --local "$MCP_ROOT/data"
+    done
+
+    if [[ ! -f "$MODEL/model.onnx" || ! -f "$MODEL/tokenizer.onnx" ]]; then
+        "$LAB_PYTHON" "$REPO/tools/export_onnx.py" \
+            --out "$MCP_ROOT/models" \
+            --reranker BAAI/bge-reranker-v2-m3
+    else
+        echo "reranker already present"
+    fi
+
     local pairs=(
         "science-abstracts|abstracts|$CORPUS/abstracts/*.parquet|"
         "science-passages|chunks|$CORPUS/passages-2019-2025/chunks-part-*.parquet|$CORPUS/passages-2019-2025/articles-part-*.parquet"

@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# Prepare the A100 box: prerequisites, environments, corpus, models, build, indexes.
+# Prepare the A100 box: prerequisites, Python environments, CUDA runtime, build.
+#
+# The machine only. Each service pulls its own data, exports the shared reranker and
+# builds its own index in its own prepare - see sciencemcp-a100.sh and openalex-a100.sh.
+# Idempotent: every step checks before acting, so re-running costs little.
 #
 # Counterpart to tools/sync.ps1 on nerds21. That script produces the corpus and
 # uploads it; this one provisions this machine and pulls it down. Idempotent -
@@ -19,32 +23,19 @@ set -euo pipefail
 MCP_ROOT="${MCP_ROOT:-$HOME/mcp}"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VENVS="$MCP_ROOT/venvs"
-# Everything under data/ came from the cloud and can be deleted and re-pulled. The
-# per-service subdirectory is the cloud path, which is why the pull lands in place.
-DATA="$MCP_ROOT/data"
-CORPUS="$DATA/sciencepcm"
 MODELS="$MCP_ROOT/models"
 DOTNET_CHANNEL="10.0"
 
 CHECK_ONLY=0
-SKIP_PULL=0
-FORCE_MODELS=0
-SKIP_MODELS=0
 SKIP_BUILD=0
-SKIP_INDEX=0
-FORCE_MODELS=0
-WITH_MEDCPT=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --check)       CHECK_ONLY=1 ;;
-        --skip-pull)   SKIP_PULL=1 ;;
-        --force-pull)  echo "--force-pull is gone; the blob store transfers only what differs" >&2 ;;
-        --skip-models) SKIP_MODELS=1 ;;
         --skip-build)  SKIP_BUILD=1 ;;
-        --skip-index)  SKIP_INDEX=1 ;;
-        --force-index) echo "--force-index is gone; the index rebuilds itself when the stamp changes" >&2 ;;
-        --with-medcpt) WITH_MEDCPT=1 ;;
+        # Data, models and indexes moved into each service's prepare.
+        --skip-pull|--force-pull|--skip-models|--skip-index|--force-index|--with-medcpt)
+                       echo "$1 is gone; see tools/{sciencemcp,openalex}-a100.sh prepare" >&2 ;;
         -h|--help)     sed -n '2,15p' "${BASH_SOURCE[0]}"; exit 0 ;;
         *)             echo "Unknown argument: $1" >&2; exit 1 ;;
     esac
@@ -205,72 +196,6 @@ EOF
     fi
 fi
 
-# ---------------------------------------------------------------- corpus
-
-step "Corpus"
-
-# The blob store fingerprints what is already on disk and transfers only what differs,
-# so there is no marker file here deciding whether a pull is needed.
-pull() {
-    local cloud="$1" name="$2"
-
-    if [[ $SKIP_PULL -eq 1 ]]; then
-        warn "$(printf '%-22s' "$name") skipped"
-        return
-    fi
-    if [[ $CHECK_ONLY -eq 1 ]]; then
-        warn "$(printf '%-22s' "$name") would pull from $cloud"
-        return
-    fi
-
-    info "$(printf '%-22s' "$name") pulling ..."
-    "$SYNC_PY" "$REPO/tools/cloudstore.py" pull-dir --cloud "$cloud" --local "$DATA"
-    local count
-    count="$(find "$CORPUS/$name" -type f 2>/dev/null | wc -l)"
-    [[ "$count" -gt 0 ]] || die "Pull of $cloud produced no files."
-    info "$(printf '%-22s' "$name") $count files"
-}
-
-mkdir -p "$DATA"
-pull "sciencepcm/abstracts"            "abstracts"
-pull "sciencepcm/passages-2019-2025"   "passages-2019-2025"
-pull "sciencepcm/questions"            "questions"
-
-# ---------------------------------------------------------------- models
-
-step "Models"
-
-# The reranker is the only model on the serving path. MedCPT's encoders are only
-# needed to revisit dense retrieval, which the LLM judge ruled out, so they are opt-in.
-if [[ $SKIP_MODELS -eq 1 ]]; then
-    warn "skipped"
-else
-    if [[ -f "$MODELS/bge-reranker/model.onnx" ]]; then
-        info "bge-reranker           already exported"
-    elif [[ $CHECK_ONLY -eq 1 ]]; then
-        warn "bge-reranker           would export to $MODELS"
-    else
-        info "checking HuggingFace reachability ..."
-        hf_status="$(curl -sSL -o /dev/null -w '%{http_code}' \
-            https://huggingface.co/BAAI/bge-reranker-v2-m3/resolve/main/config.json || echo 000)"
-        [[ "$hf_status" == "200" ]] || die "HuggingFace returned $hf_status. Sync the models from nerds21 instead."
-
-        info "bge-reranker           exporting (~2.2 GB of weights) ..."
-        "$LAB_PY" "$REPO/tools/export_onnx.py" --out "$MODELS" --reranker BAAI/bge-reranker-v2-m3
-    fi
-
-    if [[ $WITH_MEDCPT -eq 1 ]]; then
-        if [[ -f "$MODELS/medcpt-article/model.onnx" ]]; then
-            info "medcpt                 already exported"
-        elif [[ $CHECK_ONLY -eq 1 ]]; then
-            warn "medcpt                 would export encoders + cross-encoder"
-        else
-            info "medcpt                 exporting (~900 MB of weights) ..."
-            "$LAB_PY" "$REPO/tools/export_onnx.py" --out "$MODELS"
-        fi
-    fi
-fi
-
 # ---------------------------------------------------------------- build
 
 step "Build"
@@ -298,34 +223,21 @@ else
     warn "no parity file at $parity"
 fi
 
-# ---------------------------------------------------------------- indexes
-
-step "Search indexes"
-
-# Both are BM25 over Lucene. Nothing here needs the GPU; the cross-encoder is only
-# used at query time. The index build lives in sciencemcp-a100.sh so the corpus globs
-# are defined once, and it rebuilds only when the stamp says the index is stale.
-if [[ $SKIP_INDEX -eq 1 || $SKIP_BUILD -eq 1 ]]; then
-    warn "search indexes         skipped"
-elif [[ $CHECK_ONLY -eq 1 ]]; then
-    warn "search indexes         would run: bash tools/sciencemcp-a100.sh prepare"
-else
-    bash "$REPO/tools/sciencemcp-a100.sh" prepare
-fi
-
 # ---------------------------------------------------------------- summary
 
 step "Ready"
 cat <<EOF
-  data    : $DATA
-  models  : $MODELS
   venvs   : $VENVS
-  indexes : /datadisk/index (built by the serve scripts)
+  root    : $MCP_ROOT
 
-  New shells need the CUDA libraries on the path:
+  This script provisions the machine only. Each service pulls its own data, exports
+  the shared reranker if it is missing, and builds its own index:
+
     source $MCP_ROOT/env.sh
+    bash tools/sciencemcp-a100.sh prepare
+    bash tools/openalex-a100.sh prepare
 
-  Run the servers:
+  Then run them:
     bash tools/sciencemcp-a100.sh serve
     bash tools/openalex-a100.sh serve
 
