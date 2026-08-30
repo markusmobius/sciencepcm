@@ -2,7 +2,8 @@
 
 Both services share one engine: `src/SciencePcm.Index/LexicalIndex.cs` for the index
 and query, `src/SciencePcm.Server/RetrievalService.cs` for the pipeline. A query is BM25F
-over a fielded Lucene index, then a `bge-reranker-v2-m3` cross-encoder over the top 100.
+over a fielded Lucene index and a `bge-reranker-v2-m3` cross-encoder over the top 100,
+**fused by reciprocal rank** rather than one replacing the other.
 
 ## Fielded BM25F
 
@@ -35,12 +36,16 @@ It also means abstract-less works need no special handling — they have no `bod
 and compete on the fields they do have. That matters more than it sounds: 21.6% of 2025
 articles have no abstract, rising to **29.1% among those with 10 or more citations**.
 
-`author_exact` and `venue_exact` are indexed alongside, one term per name, so
-`author="Duflo, Esther"` is an exact filter rather than two common words.
+The `author` and `journal` filters are phrase queries over the analysed `authors` and
+`venue` fields. They used to be exact terms over `author_exact` / `venue_exact`, which
+fails on real data: `"Jennifer Doudna"`, `"Doudna, Jennifer A."` and bare `"Doudna"` all
+occur upstream and each exact form matched a *disjoint* set of papers, while
+`journal="Lancet"` returned nothing because the stored name is `"The Lancet"`. The
+`*_exact` fields are still written so existing indexes stay schema-valid.
 
 ## Static priors and deduplication
 
-`--citation-prior 1.0` multiplies the BM25 score by up to `1 + weight`, scaled by
+`--citation-prior 2.0` multiplies the BM25 score by up to `1 + weight`, scaled by
 `log10(1 + cited_by_count)/5.5`. Capped and multiplicative rather than additive: an
 additive bonus has to be tuned against BM25's score scale, and at any weight large enough
 to matter the most-cited papers in the corpus win every query outright. At weight 20 a
@@ -49,12 +54,38 @@ semaglutide query returned "Using thematic analysis in psychology" — 174,403 c
 This is the documented approach for known-item retrieval (Kraaij, Westerveld and
 Hiemstra, SIGIR 2002: document priors matter more than term weighting). It measurably
 helped — MRR on the landmark set went 0.125 to 0.333 — and it is disabled when a
-non-relevance sort is requested.
+non-relevance sort is requested. Raising the default from 1.0 to 2.0 moved the landmark
+sets from MRR 0.653 to 0.750 (long) and 0.625 to 0.667 (terse), and took the ChAdOx1
+*Lancet* paper — 4,980 citations — from outside the top 10 to rank 6.
 
 Results are deduplicated by title to the **best-cited** record, not the first seen.
 OpenAlex holds the same paper more than once — a preprint, a stub typed `other`, a
 merged-but-not-removed record — and the copies carry few or no citations, so keeping
 whichever scored highest discarded the canonical one.
+
+## Fusing the two stages
+
+The cross-encoder score does not replace the BM25 ordering; the two rankings are combined
+with reciprocal rank fusion, `1/(60 + rank)` summed over both. Sorting on the
+cross-encoder logit alone throws away BM25 *and* the citation prior folded into it, and
+the two scores are on unrelated scales so they cannot simply be added.
+
+Measured on the live endpoint, 30 topical queries, 418 pooled LLM judgements:
+
+| system | nDCG@10 | mean grade | % >=2 | hit@1 | MRR |
+| --- | --- | --- | --- | --- | --- |
+| BM25F + citation prior | 0.6277 | 1.618 | 49.5% | 73.3% | 0.808 |
+| **fused with the cross-encoder** | **0.8686** | **2.063** | **66.7%** | **90.0%** | **0.928** |
+
+The trade-off is real but lopsided. On the two known-item landmark sets BM25 alone is
+*better* — MRR 0.875 and 0.786, against 0.667 and 0.653 fused — because a known-item query
+is an identity lookup that BM25F plus the citation prior already answers, and the
+cross-encoder only adds noise. Eight unjudged known-item queries do not outweigh 30 judged
+topical ones, and topical questions are what the services are for.
+
+Not to be confused with the rejected *BM25 + dense* fusion below. Fusing two rankings of
+very different quality dilutes the stronger one; fusing two of comparable quality that
+fail differently is the case RRF is for.
 
 ## Rejected
 
