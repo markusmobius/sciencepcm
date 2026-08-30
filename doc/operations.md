@@ -6,17 +6,16 @@ Day-to-day running of both services. Provisioning a fresh box is
 ## Tokens
 
 Each service has its own bearer token, handed out independently. They live in the
-installed unit files, not in the repo:
+installed unit files, not in the repo.
+
+`tools/gcr-prep.sh` asks for both and writes them in (see [As services](#as-services)).
+To change one afterwards:
 
 ```bash
-sudo cp deploy/systemd/mcp-{prepare,science-server,openalex-server,tunnel}.service \
-        /etc/systemd/system/
-sudoedit /etc/systemd/system/mcp-science-server.service     # Environment=SCIENCEPCM_TOKEN=...
-sudoedit /etc/systemd/system/mcp-openalex-server.service    # Environment=OPENALEX_TOKEN=...
+sudoedit /etc/systemd/system/mcp-science-server.service     # Environment="SCIENCEPCM_TOKEN=..."
+sudoedit /etc/systemd/system/mcp-openalex-server.service    # Environment="OPENALEX_TOKEN=..."
 sudo systemctl daemon-reload
 ```
-
-`mcp-console.service` is deliberately not in that list — it runs on the relay.
 
 Use the values your existing clients already send. Generating fresh ones breaks every
 configured client at once.
@@ -50,12 +49,17 @@ Both scripts pass anything after `serve` to the server, e.g.
 
 ## As services
 
-Copy the units and set the tokens as above, then:
+`tools/gcr-prep.sh` installs them. It asks once, prompts for each token without echoing
+it, writes the units `root:root` mode 600, and enables them at boot without starting
+them. Re-running refreshes the units from the repo and carries the existing tokens over,
+so it never re-asks and never blanks a working token.
+
+`mcp-console.service` is deliberately not installed here — it runs on the relay.
+
+Start them when you are ready for the rebuild:
 
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl enable mcp-prepare
-sudo systemctl enable --now mcp-science-server mcp-openalex-server mcp-tunnel
+sudo systemctl start mcp-science-server mcp-openalex-server mcp-tunnel
 ```
 
 | unit | job |

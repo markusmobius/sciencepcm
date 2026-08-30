@@ -13,6 +13,9 @@
 # The dense/embedding pipeline is NOT part of this - the served path is BM25 plus
 # cross-encoder reranking, and the vectors stay archived in the blob store.
 #
+# Offers to install the systemd units, asking for each server's token. Tokens already
+# present in the installed units are reused, so re-running never re-asks.
+#
 #   bash tools/gcr-prep.sh --check     report only
 #   bash tools/gcr-prep.sh             provision, pull, build, index, verify
 #
@@ -36,7 +39,7 @@ while [[ $# -gt 0 ]]; do
         # with --no-build: dotnet run rebuilds anyway, so skipping here only hides errors.
         --skip-pull|--force-pull|--skip-models|--skip-index|--force-index|--with-medcpt|--skip-build)
                        echo "$1 is gone; see tools/{sciencemcp,openalex}-a100.sh prepare" >&2 ;;
-        -h|--help)     sed -n '2,15p' "${BASH_SOURCE[0]}"; exit 0 ;;
+        -h|--help)     sed -n '2,22p' "${BASH_SOURCE[0]}"; exit 0 ;;
         *)             echo "Unknown argument: $1" >&2; exit 1 ;;
     esac
     shift
@@ -216,6 +219,92 @@ else
     info "built with the CUDA execution provider"
 fi
 
+# ---------------------------------------------------------------- services
+
+step "Services"
+
+SYSTEMD_DIR=/etc/systemd/system
+# mcp-console.service is missing on purpose: it runs on the relay, not on this box.
+UNITS=(mcp-prepare.service mcp-science-server.service mcp-openalex-server.service mcp-tunnel.service)
+
+TOKEN=""
+
+# Prefers the value already installed, so re-running never asks twice and never
+# overwrites a working token with a blank one.
+resolve_token() {
+    local unit=$1 var=$2
+    TOKEN=""
+    if [[ -r "$SYSTEMD_DIR/$unit" ]]; then
+        TOKEN="$(sed -n "s/^Environment=\"\?$var=\([^\"]*\)\"\?\$/\1/p" "$SYSTEMD_DIR/$unit" | tail -1)"
+    fi
+    if [[ -n "$TOKEN" ]]; then
+        info "$var kept from the installed unit"
+    elif [[ -n "${!var:-}" ]]; then
+        TOKEN="${!var}"
+        info "$var taken from the environment"
+    elif [[ -t 0 ]]; then
+        read -rsp "  $var (blank leaves that server unauthenticated): " TOKEN < /dev/tty
+        echo
+    fi
+    [[ "$TOKEN" != *[\"$'\n']* ]] || die "$var contains a quote or newline; systemd cannot carry that."
+    [[ -n "$TOKEN" ]] || warn "$var empty - that server will accept unauthenticated requests"
+}
+
+install_unit() {
+    local unit=$1 var=${2:-} tmp
+    tmp="$(mktemp)"
+    trap 'rm -f "$tmp"' RETURN
+    if [[ -n "$var" ]]; then
+        # Token via the environment, not -v: awk's argv is visible in ps.
+        UNIT_TOKEN="$TOKEN" awk -v var="$var" '
+            $0 ~ "^Environment=\"?" var "=" { printf "Environment=\"%s=%s\"\n", var, ENVIRON["UNIT_TOKEN"]; next }
+            { print }' "$REPO/deploy/systemd/$unit" > "$tmp"
+    else
+        cat "$REPO/deploy/systemd/$unit" > "$tmp"
+    fi
+    sudo install -m 600 -o root -g root "$tmp" "$SYSTEMD_DIR/$unit"
+    info "installed $unit"
+}
+
+SERVICES_INSTALLED=0
+FRESH=0
+for u in "${UNITS[@]}"; do [[ -e "$SYSTEMD_DIR/$u" ]] || FRESH=1; done
+
+if [[ $CHECK_ONLY -eq 1 ]]; then
+    for u in "${UNITS[@]}"; do
+        [[ -e "$SYSTEMD_DIR/$u" ]] && info "$u installed" || warn "$u not installed"
+    done
+elif ! command -v systemctl >/dev/null 2>&1; then
+    warn "no systemctl here; skipping"
+else
+    if [[ $FRESH -eq 0 ]]; then
+        reply=y                       # refresh in place, tokens carried over
+        info "already installed; refreshing from the repo"
+    elif [[ -t 0 ]]; then
+        read -rp "  Install the four units into $SYSTEMD_DIR (needs sudo)? [y/N] " reply < /dev/tty
+    else
+        reply=n
+        warn "not a terminal; skipping (see the summary for the manual steps)"
+    fi
+
+    if [[ "$reply" =~ ^[Yy] ]]; then
+        resolve_token mcp-science-server.service SCIENCEPCM_TOKEN
+        install_unit  mcp-science-server.service SCIENCEPCM_TOKEN
+        resolve_token mcp-openalex-server.service OPENALEX_TOKEN
+        install_unit  mcp-openalex-server.service OPENALEX_TOKEN
+        install_unit  mcp-prepare.service
+        install_unit  mcp-tunnel.service
+        TOKEN=""
+
+        sudo systemctl daemon-reload
+        if [[ $FRESH -eq 1 ]]; then
+            sudo systemctl enable "${UNITS[@]}" >/dev/null
+            info "enabled at boot, not started"
+        fi
+        SERVICES_INSTALLED=1
+    fi
+fi
+
 # ---------------------------------------------------------------- summary
 
 step "Ready"
@@ -236,16 +325,32 @@ cat <<EOF
 
   Expose them (relay holds the public TLS endpoint):
     ./tools/mcp-tunnel.sh
+EOF
+
+if [[ $SERVICES_INSTALLED -eq 1 ]]; then
+cat <<EOF
+
+  The units are installed and enabled. Starting a server pulls in mcp-prepare, which
+  runs both prepares in sequence first - hours on a wiped /datadisk:
+    sudo systemctl start mcp-science-server mcp-openalex-server mcp-tunnel
+    journalctl -u mcp-prepare -f
+
+  Change a token later with:
+    sudoedit $SYSTEMD_DIR/mcp-science-server.service && sudo systemctl daemon-reload
+EOF
+else
+cat <<EOF
 
   Or install them as services (not mcp-console.service - that one runs on the relay):
     sudo cp deploy/systemd/mcp-{prepare,science-server,openalex-server,tunnel}.service \\
-            /etc/systemd/system/
+            $SYSTEMD_DIR/
 
   Set the tokens in the installed copies - the ones in the repo are empty on purpose,
   and an empty token starts the server unauthenticated:
-    sudoedit /etc/systemd/system/mcp-science-server.service    # SCIENCEPCM_TOKEN=
-    sudoedit /etc/systemd/system/mcp-openalex-server.service   # OPENALEX_TOKEN=
+    sudoedit $SYSTEMD_DIR/mcp-science-server.service    # SCIENCEPCM_TOKEN=
+    sudoedit $SYSTEMD_DIR/mcp-openalex-server.service   # OPENALEX_TOKEN=
 
     sudo systemctl daemon-reload
     sudo systemctl enable --now mcp-prepare mcp-science-server mcp-openalex-server mcp-tunnel
 EOF
+fi
