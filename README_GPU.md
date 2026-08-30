@@ -336,7 +336,7 @@ bash tools/sciencemcp-a100.sh serve
 ```
 
 The script owns the index, passage-index, reranker and port, and prefers the `/datadisk`
-copy when it is present. `mcp-server.service` runs the same script, so the unit and this
+copy when it is present. `mcp-science-server.service` runs the same script, so the unit and this
 runbook cannot drift apart. `bash tools/sciencemcp-a100.sh check` reports the paths,
 sizes and index schema version without starting anything.
 

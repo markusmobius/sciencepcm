@@ -7,19 +7,19 @@
 #   cd ~/sciencepcm && bash tools/openalex-a100.sh prepare   # digest + model + index
 #   echo 'OPENALEX_TOKEN=a-different-long-random-string' | sudo tee /etc/openalex.env
 #   sudo chmod 600 /etc/openalex.env
-#   sudo cp deploy/systemd/openalex-server.service /etc/systemd/system/
+#   sudo cp deploy/systemd/mcp-openalex-server.service /etc/systemd/system/
 #   sudo systemctl daemon-reload
-#   sudo systemctl enable --now openalex-server
+#   sudo systemctl enable --now mcp-openalex-server
 #
 # Check on it:
-#   systemctl status openalex-server
-#   journalctl -u openalex-server -f
+#   systemctl status mcp-openalex-server
+#   journalctl -u mcp-openalex-server -f
 #   curl -s localhost:8081/health
 #
 # Adjust User= and the /home/mobius paths if the box differs.
 
 [Unit]
-Description = openalex-server
+Description = mcp-openalex-server
 After = network.target mcp-prepare.service
 Requires = mcp-prepare.service
 

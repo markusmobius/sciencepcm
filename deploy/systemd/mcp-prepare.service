@@ -20,7 +20,7 @@
 [Unit]
 Description = mcp-prepare
 After = local-fs.target network.target
-Before = mcp-server.service openalex-server.service
+Before = mcp-science-server.service mcp-openalex-server.service
 
 [Service]
 Type=oneshot

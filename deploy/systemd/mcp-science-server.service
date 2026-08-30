@@ -7,22 +7,21 @@
 #   cd ~/sciencepcm && bash tools/gcr-prep.sh          # models + indexes first
 #   echo 'SCIENCEPCM_TOKEN=your-long-random-string' | sudo tee /etc/sciencepcm.env
 #   sudo chmod 600 /etc/sciencepcm.env
-#   sudo cp deploy/systemd/mcp-server.service /etc/systemd/system/
+#   sudo cp deploy/systemd/mcp-science-server.service /etc/systemd/system/
 #   sudo systemctl daemon-reload
-#   sudo systemctl enable --now mcp-server
+#   sudo systemctl enable --now mcp-science-server
 #
 # Check on it:
-#   systemctl status mcp-server
-#   journalctl -u mcp-server -f
+#   systemctl status mcp-science-server
+#   journalctl -u mcp-science-server -f
 #   curl -s localhost:8080/health
 #
 # Adjust User= and the /home/mobius paths if the box differs.
 
 [Unit]
-Description = mcp-server
+Description = mcp-science-server
 After = network.target mcp-prepare.service
 Requires = mcp-prepare.service
-
 [Service]
 Type=simple
 User=mobius

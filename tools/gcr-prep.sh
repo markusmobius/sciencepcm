@@ -341,5 +341,5 @@ cat <<EOF
 
   Or install both as services:
     sudo cp deploy/systemd/*.service /etc/systemd/system/
-    sudo systemctl daemon-reload && sudo systemctl enable --now mcp-server mcp-tunnel
+    sudo systemctl daemon-reload && sudo systemctl enable --now mcp-prepare mcp-science-server mcp-tunnel
 EOF
