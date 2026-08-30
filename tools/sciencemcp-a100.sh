@@ -7,19 +7,19 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DATA_ROOT="${SCIENCEPCM_DATA_ROOT:-$HOME/sciencepcm-data}"
-FAST_ROOT="${SCIENCEPCM_FAST_ROOT:-/datadisk}"
-MODEL="$DATA_ROOT/models/bge-reranker"
+MCP_ROOT="${MCP_ROOT:-$HOME/mcp}"
+FAST_ROOT="${MCP_FAST_ROOT:-/datadisk}"
+CORPUS="$MCP_ROOT/data/sciencepcm"
+MODEL="$MCP_ROOT/models/bge-reranker"
 PORT="${SCIENCEPCM_PORT:-8080}"
 
 # The index lives only on the NVMe. A durable copy of the OpenAlex index does not fit on
 # the OS disk, so neither service keeps one and both rebuild after a deallocation - the
 # stamp goes with the wiped disk, so prepare notices on its own.
-INDEX_ROOT="$FAST_ROOT/sciencepcm-data/index"
+INDEX_ROOT="$FAST_ROOT/index"
 
-ABSTRACTS_INDEX="$INDEX_ROOT/abstracts-bm25"
-PASSAGE_INDEX="$INDEX_ROOT/passages-bm25"
-CORPUS="${SCIENCEPCM_CORPUS:-$DATA_ROOT/sciencepcm}"
+ABSTRACTS_INDEX="$INDEX_ROOT/science-abstracts"
+PASSAGE_INDEX="$INDEX_ROOT/science-passages"
 COMMAND="${1:-serve}"
 
 size_of() {
@@ -39,8 +39,8 @@ index_current() {
 # current - now that there is only one path.
 prepare() {
     local pairs=(
-        "abstracts-bm25|abstracts|$CORPUS/abstracts/*.parquet|"
-        "passages-bm25|chunks|$CORPUS/passages-2019-2025/chunks-part-*.parquet|$CORPUS/passages-2019-2025/articles-part-*.parquet"
+        "science-abstracts|abstracts|$CORPUS/abstracts/*.parquet|"
+        "science-passages|chunks|$CORPUS/passages-2019-2025/chunks-part-*.parquet|$CORPUS/passages-2019-2025/articles-part-*.parquet"
     )
 
     for pair in "${pairs[@]}"; do

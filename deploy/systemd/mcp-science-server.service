@@ -35,7 +35,7 @@ EnvironmentFile=-/etc/sciencepcm.env
 # bash -lc, not ExecStart directly: env.sh exports the CUDA 12 and cuDNN 9 library
 # paths ONNX Runtime needs, and it is a shell script rather than a systemd-style
 # KEY=VALUE EnvironmentFile.
-ExecStart=/bin/bash -lc 'source /home/mobius/sciencepcm-data/env.sh && exec bash tools/sciencemcp-a100.sh serve'
+ExecStart=/bin/bash -lc 'source /home/mobius/mcp/env.sh && exec bash tools/sciencemcp-a100.sh serve'
 
 Restart=on-failure
 RestartSec=10

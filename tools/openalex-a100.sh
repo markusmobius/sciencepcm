@@ -3,22 +3,22 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DATA_ROOT="${OPENALEX_DATA_ROOT:-$HOME/openalex-data}"
-FAST_ROOT="${OPENALEX_FAST_ROOT:-/datadisk}"
-SYNC_PYTHON="${SCIENCEPCM_DATA_ROOT:-$HOME/sciencepcm-data}/venvs/sync/bin/python"
-LAB_PYTHON="${SCIENCEPCM_DATA_ROOT:-$HOME/sciencepcm-data}/venvs/lab/bin/python"
+MCP_ROOT="${MCP_ROOT:-$HOME/mcp}"
+FAST_ROOT="${MCP_FAST_ROOT:-/datadisk}"
+SYNC_PYTHON="$MCP_ROOT/venvs/sync/bin/python"
+LAB_PYTHON="$MCP_ROOT/venvs/lab/bin/python"
 
 # Parquet stays on the managed disk: 134 GB read once, sequentially, during the build,
 # which is the one access pattern a spinning disk handles well. It is pulled straight
-# into DATA_ROOT, where the cloud path lands it, so the blob store can fingerprint what
+# into data/, where the cloud path lands it, so the blob store can fingerprint what
 # is already there and transfer only what differs.
-ABSTRACTS="$DATA_ROOT/openalex/abstracts"
-MODEL="$DATA_ROOT/models/openalex-bge"
+ABSTRACTS="$MCP_ROOT/data/openalex/abstracts"
+MODEL="$MCP_ROOT/models/openalex-bge"
 
 # The index lives only on the NVMe. A durable copy does not fit - the index is larger
 # than the free space on the OS disk - so a deallocation that wipes /datadisk means a
 # rebuild from Parquet, which prepare does on its own because the stamp goes with it.
-INDEX="$FAST_ROOT/openalex-data/index/abstracts-bm25"
+INDEX="$FAST_ROOT/index/openalex-abstracts"
 
 STAMP="index-stamp.json"
 COMMAND="${1:-prepare}"
@@ -54,7 +54,7 @@ size_of() {
 check() {
     echo "service      : OpenAlex MCP"
     echo "host         : $(hostname)"
-    echo "data root    : $DATA_ROOT ($(free_gb "$DATA_ROOT" 2>/dev/null || echo '?') GB free)"
+    echo "root         : $MCP_ROOT ($(free_gb "$MCP_ROOT" 2>/dev/null || echo '?') GB free)"
     echo "abstracts    : $ABSTRACTS [$(size_of "$ABSTRACTS")]"
     echo "index        : $INDEX [$(size_of "$INDEX")] ($(free_gb "$FAST_ROOT" 2>/dev/null || echo '?') GB free on $FAST_ROOT)"
     echo "reranker     : $MODEL"
@@ -76,11 +76,11 @@ check() {
 
 prepare() {
     check
-    mkdir -p "$DATA_ROOT" "$DATA_ROOT/models" "$(dirname "$INDEX")"
+    mkdir -p "$MCP_ROOT/data" "$MCP_ROOT/models" "$(dirname "$INDEX")"
 
     echo "pulling OpenAlex abstract digest (skips files already present and unchanged)"
     if ! env -u MAXCORES "$SYNC_PYTHON" "$REPO/tools/openalex-cloudstore.py" \
-            pull --local "$DATA_ROOT"; then
+            pull --local "$MCP_ROOT/data"; then
         # At boot the cloud may be unreachable or the credentials absent. An existing
         # digest is enough to bring the service back up.
         has_abstracts || { echo "pull failed and there is no local digest" >&2; exit 1; }
@@ -97,7 +97,7 @@ prepare() {
         # wide margin (hit@1 40.0% vs 23.3% over 30 known-item queries) and, being XLM-R
         # based, it is multilingual like the corpus. It costs about 475 ms per query.
         "$LAB_PYTHON" "$REPO/tools/export_onnx.py" \
-            --out "$DATA_ROOT/models" \
+            --out "$MCP_ROOT/models" \
             --reranker BAAI/bge-reranker-v2-m3 \
             --reranker-name openalex-bge
     else

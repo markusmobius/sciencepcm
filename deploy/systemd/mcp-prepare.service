@@ -35,8 +35,8 @@ TimeoutStartSec=0
 
 # Two ExecStart lines in a oneshot unit run one after the other, which is the sequencing
 # this unit exists for.
-ExecStart=/bin/bash -lc 'source /home/mobius/sciencepcm-data/env.sh && bash tools/sciencemcp-a100.sh prepare'
-ExecStart=/bin/bash -lc 'source /home/mobius/sciencepcm-data/env.sh && bash tools/openalex-a100.sh prepare'
+ExecStart=/bin/bash -lc 'source /home/mobius/mcp/env.sh && bash tools/sciencemcp-a100.sh prepare'
+ExecStart=/bin/bash -lc 'source /home/mobius/mcp/env.sh && bash tools/openalex-a100.sh prepare'
 
 [Install]
 WantedBy=multi-user.target

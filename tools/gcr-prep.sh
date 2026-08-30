@@ -16,17 +16,19 @@
 
 set -euo pipefail
 
-DATA_ROOT="${DATA_ROOT:-$HOME/sciencepcm-data}"
+MCP_ROOT="${MCP_ROOT:-$HOME/mcp}"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VENVS="$DATA_ROOT/venvs"
-CORPUS="$DATA_ROOT/sciencepcm"
-MODELS="$DATA_ROOT/models"
-INDEXES="$DATA_ROOT/index"
+VENVS="$MCP_ROOT/venvs"
+# Everything under data/ came from the cloud and can be deleted and re-pulled. The
+# per-service subdirectory is the cloud path, which is why the pull lands in place.
+DATA="$MCP_ROOT/data"
+CORPUS="$DATA/sciencepcm"
+MODELS="$MCP_ROOT/models"
 DOTNET_CHANNEL="10.0"
 
 CHECK_ONLY=0
 SKIP_PULL=0
-FORCE_PULL=0
+FORCE_MODELS=0
 SKIP_MODELS=0
 SKIP_BUILD=0
 SKIP_INDEX=0
@@ -37,7 +39,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --check)       CHECK_ONLY=1 ;;
         --skip-pull)   SKIP_PULL=1 ;;
-        --force-pull)  FORCE_PULL=1 ;;
+        --force-pull)  echo "--force-pull is gone; the blob store transfers only what differs" >&2 ;;
         --skip-models) SKIP_MODELS=1 ;;
         --skip-build)  SKIP_BUILD=1 ;;
         --skip-index)  SKIP_INDEX=1 ;;
@@ -59,7 +61,7 @@ die()   { printf '\n\033[31mERROR: %s\033[0m\n' "$1" >&2; exit 1; }
 step "Machine"
 info "cores      : $(nproc)"
 info "memory     : $(free -g | awk '/^Mem:/ {print $2}') GB"
-info "disk (${DATA_ROOT%%/*}/) : $(df -BG --output=avail "$HOME" | tail -1 | tr -d ' ')B available"
+info "disk (${MCP_ROOT%%/*}/) : $(df -BG --output=avail "$HOME" | tail -1 | tr -d ' ')B available"
 
 if command -v nvidia-smi >/dev/null 2>&1; then
     info "gpu        : $(nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader | head -1)"
@@ -193,13 +195,13 @@ if [[ -n "$CUDA_LIBS" ]]; then
 
     # Interactive shells need the same paths for manual dotnet runs.
     if [[ $CHECK_ONLY -eq 0 ]]; then
-        cat > "$DATA_ROOT/env.sh" <<EOF
+        cat > "$MCP_ROOT/env.sh" <<EOF
 # Source before running SciencePcm.Embed with --gpu:
-#   source $DATA_ROOT/env.sh
+#   source $MCP_ROOT/env.sh
 export PATH="\$HOME/.dotnet:\$HOME/.local/bin:\$PATH"
 export LD_LIBRARY_PATH="$CUDA_LIBS\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
 EOF
-        info "wrote $DATA_ROOT/env.sh"
+        info "wrote $MCP_ROOT/env.sh"
     fi
 fi
 
@@ -207,15 +209,11 @@ fi
 
 step "Corpus"
 
-# A marker file records a completed pull, so re-runs do not re-download.
+# The blob store fingerprints what is already on disk and transfers only what differs,
+# so there is no marker file here deciding whether a pull is needed.
 pull() {
     local cloud="$1" name="$2"
-    local marker="$DATA_ROOT/.pulled-$name"
 
-    if [[ -f "$marker" && $FORCE_PULL -eq 0 ]]; then
-        info "$(printf '%-22s' "$name") already pulled ($(cat "$marker"))"
-        return
-    fi
     if [[ $SKIP_PULL -eq 1 ]]; then
         warn "$(printf '%-22s' "$name") skipped"
         return
@@ -226,15 +224,14 @@ pull() {
     fi
 
     info "$(printf '%-22s' "$name") pulling ..."
-    "$SYNC_PY" "$REPO/tools/cloudstore.py" pull-dir --cloud "$cloud" --local "$DATA_ROOT"
+    "$SYNC_PY" "$REPO/tools/cloudstore.py" pull-dir --cloud "$cloud" --local "$DATA"
     local count
     count="$(find "$CORPUS/$name" -type f 2>/dev/null | wc -l)"
     [[ "$count" -gt 0 ]] || die "Pull of $cloud produced no files."
-    echo "$count files, $(date -Iseconds)" > "$marker"
     info "$(printf '%-22s' "$name") $count files"
 }
 
-mkdir -p "$DATA_ROOT"
+mkdir -p "$DATA"
 pull "sciencepcm/abstracts"            "abstracts"
 pull "sciencepcm/passages-2019-2025"   "passages-2019-2025"
 pull "sciencepcm/questions"            "questions"
@@ -320,23 +317,19 @@ fi
 
 step "Ready"
 cat <<EOF
-  corpus  : $CORPUS
+  data    : $DATA
   models  : $MODELS
-  indexes : $INDEXES
   venvs   : $VENVS
+  indexes : /datadisk/index (built by the serve scripts)
 
   New shells need the CUDA libraries on the path:
-    source $DATA_ROOT/env.sh
+    source $MCP_ROOT/env.sh
 
-  Run the MCP server:
-    export SCIENCEPCM_TOKEN=...          # or put it in ~/.bashrc
-    dotnet run --project src/SciencePcm.Server -c Release -p:UseGpu=true -- \\
-      --index $INDEXES/abstracts-bm25 \\
-      --passage-index $INDEXES/passages-bm25 \\
-      --cross-encoder $MODELS/bge-reranker \\
-      --gpu --urls http://0.0.0.0:8080
+  Run the servers:
+    bash tools/sciencemcp-a100.sh serve
+    bash tools/openalex-a100.sh serve
 
-  Expose it (relay holds the public TLS endpoint):
+  Expose them (relay holds the public TLS endpoint):
     ./tools/mcp-tunnel.sh
 
   Or install both as services:
