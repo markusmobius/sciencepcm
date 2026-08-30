@@ -1,10 +1,10 @@
 # Copy indexes onto the ephemeral NVMe before any MCP server starts.
 #
 # /datadisk is local NVMe and is wiped when the VM deallocates. The durable copies live
-# on the managed disk; this restores them. A full restore is ~45 minutes at the managed
-# disk's read speed, against several hours to rebuild the OpenAlex index from Parquet.
-# When the copies are already present rsync finishes in seconds, so this is safe to
-# leave enabled.
+# on the managed disk; this restores them. A full restore runs at the managed disk's read
+# speed and grows with the index, against several hours to rebuild the OpenAlex index
+# from Parquet. When the copies are already present rsync finishes in seconds, so this is
+# safe to leave enabled.
 #
 # Install:
 #   sudo cp deploy/systemd/datadisk-restore.service /etc/systemd/system/
@@ -23,7 +23,7 @@ Type=oneshot
 User=mobius
 RemainAfterExit=yes
 
-# Restoring 326 GB takes far longer than the default 90 second start timeout.
+# Restoring hundreds of GB takes far longer than the default 90 second start timeout.
 TimeoutStartSec=0
 
 ExecStart=/home/mobius/sciencepcm/tools/datadisk-restore.sh

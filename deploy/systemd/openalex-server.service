@@ -1,0 +1,45 @@
+# OpenAlex MCP server (GPU box). Second service, same box, own port and token.
+#
+# datadisk-restore.service already names this unit in its Before=, so the index is on
+# the NVMe before this starts.
+#
+# Install:
+#   cd ~/sciencepcm && bash tools/openalex-a100.sh prepare   # digest + model + index
+#   echo 'OPENALEX_TOKEN=a-different-long-random-string' | sudo tee /etc/openalex.env
+#   sudo chmod 600 /etc/openalex.env
+#   sudo cp deploy/systemd/openalex-server.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now openalex-server
+#
+# Check on it:
+#   systemctl status openalex-server
+#   journalctl -u openalex-server -f
+#   curl -s localhost:8081/health
+#
+# Adjust User= and the /home/mobius paths if the box differs.
+
+[Unit]
+Description = openalex-server
+After = network.target datadisk-restore.service
+Requires = datadisk-restore.service
+
+[Service]
+Type=simple
+User=mobius
+
+WorkingDirectory=/home/mobius/sciencepcm
+
+# Separate token from SciencePCM: the two services are handed out independently.
+# "-" means start anyway if the file is absent, unauthenticated, and say so at startup.
+EnvironmentFile=-/etc/openalex.env
+
+# bash -lc, not ExecStart directly: env.sh exports the CUDA 12 and cuDNN 9 library
+# paths ONNX Runtime needs, and it is a shell script rather than a systemd-style
+# KEY=VALUE EnvironmentFile.
+ExecStart=/bin/bash -lc 'source /home/mobius/sciencepcm-data/env.sh && exec bash tools/openalex-a100.sh serve'
+
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target
