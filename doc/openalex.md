@@ -165,7 +165,7 @@ NVMe argument strengthens as the index grows past the box's 216 GB of RAM.
 Set `OPENALEX_FAST_ROOT` to override `/datadisk`. If it is missing or not writable the
 script serves from the managed disk and says so.
 
-## 1. nerds21
+## Producing the digest on nerds21
 
 The share `\\nerds21\OpenAlexData` is `C:\OpenAlexData` locally on nerds21.
 Use the local path on nerds21; SMB loopback only makes a long ingest slower.
@@ -205,62 +205,7 @@ dotnet run --project src\OpenAlex.Ingest -c Release -- `
   --limit 10000 --threads 8 --shard-size 5000
 ```
 
-## 2. A100
 
-This assumes the machine has already been provisioned by `tools/gcr-prep.sh`, so its
-.NET, sync/lab Python environments and CUDA 12 libraries are available.
-
-```bash
-cd ~/sciencepcm
-source ~/mcp/env.sh
-bash tools/openalex-a100.sh check
-bash tools/openalex-a100.sh prepare
-```
-
-`prepare` pulls the digest into `~/mcp/data/openalex/abstracts`, exports the
-`BAAI/bge-reranker-v2-m3` reranker if it is not already there, and builds
-`/datadisk/index/openalex-abstracts`. It skips whatever is already current.
-
-The corpus is multilingual and so is the reranker, but Lucene's analyzer is English
-oriented, so non-English records are retained with weaker recall.
-
-Set an independent token and start the second server:
-
-```bash
-export OPENALEX_TOKEN='a-different-long-random-string'
-echo "export OPENALEX_TOKEN='$OPENALEX_TOKEN'" >> ~/.bashrc
-
-screen -S openalex-mcp
-source ~/mcp/env.sh
-cd ~/sciencepcm
-bash tools/openalex-a100.sh serve
-```
-
-Detach with `Ctrl+A`, `D`, then verify:
-
-```bash
-curl -s localhost:8081/health
-```
-
-The response identifies `service: OpenAlex` and reports the abstract count.
-
-## 3. Tunnel and nginx
-
-Run both reverse forwards from the A100 machine:
-
-```bash
-FORWARDS="9201:8080 9202:8081" ./tools/mcp-tunnel.sh
-```
-
-On the relay, install `deploy/nginx/openalexmcp.econlabs.org.conf` and obtain its TLS
-certificate using the commands in that file. The endpoint is then:
-
-```text
-https://www.openalexmcp.econlabs.org/mcp
-```
-
-The MCP tools are deliberately distinct:
-
-- `search_openalex`
-- `get_openalex_work`
-- `openalex_corpus_stats`
+Running the server, the tunnel and the nginx vhost are in
+[operations.md](operations.md). The MCP tools are deliberately distinct from
+ScienceMCP's: `search_openalex`, `get_openalex_work`, `openalex_corpus_stats`.

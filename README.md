@@ -17,11 +17,12 @@ A browser console for poking at either lives at `www.mcptest.econlabs.org`.
 
 - **[doc/provisioning.md](doc/provisioning.md)** — getting a GPU box ready: the right
   machine, .NET, Python environments, the CUDA 12 / cuDNN 9 dance ONNX Runtime needs.
+- **[doc/operations.md](doc/operations.md)** — running it: tokens, the systemd units, the
+  reverse tunnel and nginx, refreshing the data, what lives on which disk.
 - **[doc/sciencemcp.md](doc/sciencemcp.md)** — the neuroscience service: two tiers, its
   tools, and why full text beats abstracts by 0.932 to 0.247 on methods questions.
-- **[doc/openalex.md](doc/openalex.md)** — the news-to-paper service: fielded BM25F
-  ranking, the citation prior, and a written-up investigation of why landmark papers
-  went missing.
+- **[doc/openalex.md](doc/openalex.md)** — the news-to-paper service: its corpus, its
+  filters, and why there is no Semantic Scholar merge.
 - **[doc/retrieval.md](doc/retrieval.md)** — how ranking works and what was measured to
   arrive at it, including the approaches that were tried and rejected.
 - **[doc/evaluation.md](doc/evaluation.md)** — running a blind A/B of an LLM with and

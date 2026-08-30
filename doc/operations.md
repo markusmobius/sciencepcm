@@ -1,0 +1,168 @@
+# Operations
+
+Day-to-day running of both services. Provisioning a fresh box is
+[provisioning.md](provisioning.md); this assumes that is done.
+
+## Tokens
+
+Each service has its own bearer token, handed out independently.
+
+```bash
+printf 'SCIENCEPCM_TOKEN=%s\n' "$(openssl rand -hex 32)" | sudo tee /etc/sciencepcm.env
+printf 'OPENALEX_TOKEN=%s\n'   "$(openssl rand -hex 32)" | sudo tee /etc/openalex.env
+sudo chmod 600 /etc/sciencepcm.env /etc/openalex.env
+```
+
+systemd `KEY=VALUE` format — no `export`, no quotes. Both units reference these with a
+leading `-`, so a missing file is not fatal: the server starts unauthenticated and says
+so at startup. `/health` never needs a token, which is what separates "unreachable" from
+"wrong token" when debugging.
+
+## Running
+
+```bash
+source ~/mcp/env.sh
+cd ~/sciencepcm
+
+bash tools/sciencemcp-a100.sh prepare && bash tools/sciencemcp-a100.sh serve
+bash tools/openalex-a100.sh   prepare && bash tools/openalex-a100.sh   serve
+```
+
+`prepare` pulls its service's data, exports the shared reranker if absent, and builds its
+index only when `index-stamp.json` no longer matches the source shards and schema
+version. Safe and cheap to re-run at any time. `check` reports paths, sizes and the index
+schema version without starting anything.
+
+Both scripts pass anything after `serve` to the server, e.g.
+`serve --citation-prior 2.0`.
+
+## As services
+
+```bash
+sudo cp deploy/systemd/*.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable mcp-prepare
+sudo systemctl enable --now mcp-science-server mcp-openalex-server mcp-tunnel
+```
+
+| unit | job |
+| --- | --- |
+| `mcp-prepare` | runs both `prepare`s **in sequence**; the servers `Requires=` it |
+| `mcp-science-server` | port 8080 |
+| `mcp-openalex-server` | port 8081 |
+| `mcp-tunnel` | reverse SSH, 9201→8080 and 9202→8081 |
+| `mcp-console` | the browser console — runs on the *relay*, not here |
+
+`mcp-prepare` exists because `/datadisk` is wiped on deallocation and both services then
+rebuild from the same slow disk. Running them in sequence rather than in parallel is the
+entire point; `TimeoutStartSec=0` because a rebuild takes hours. `systemctl status
+mcp-prepare` sitting in `activating` with both servers queued behind it is the design
+working, not a hang — watch it with `journalctl -u mcp-prepare -f`.
+
+## Exposing them
+
+The GPU box takes no inbound connections. A reverse SSH tunnel makes it appear on the
+relay (`www.llmserver.econlabs.org`), where nginx terminates TLS.
+
+```bash
+./tools/mcp-tunnel.sh                          # both forwards
+FORWARDS="9201:8080" ./tools/mcp-tunnel.sh     # just one
+```
+
+| relay port | local port | endpoint |
+| --- | --- | --- |
+| 9201 | 8080 | `https://www.sciencemcp.econlabs.org/mcp` |
+| 9202 | 8081 | `https://www.openalexmcp.econlabs.org/mcp` |
+
+`-R` binds to the relay's loopback, so the ports are never directly exposed — only nginx
+reaches them. Verify with `ss -tlnp | grep 9201` on the relay.
+
+The vhosts are in `deploy/nginx/`, each carrying its own install and certbot commands in
+a header comment. **CORS lives in the app for servers we own and in nginx only for ones
+we do not** — set in both places, browsers see a duplicated
+`Access-Control-Allow-Origin` and reject the response outright.
+
+## Checking the chain
+
+In order, so a failure names its own hop:
+
+```bash
+curl -s localhost:8080/health                        # on the GPU box
+curl -s localhost:9201/health                        # on the relay: tunnel up?
+curl -s https://www.sciencemcp.econlabs.org/health   # anywhere: nginx and TLS
+```
+
+Each server loads its index and model at startup rather than on first request, so a wrong
+path fails immediately instead of on someone's first question.
+
+## Pointing an LLM at it
+
+MCP over Streamable HTTP at `/mcp`. In VS Code, `.vscode/mcp.json`:
+
+```json
+{
+  "servers": {
+    "sciencepcm": {
+      "type": "http",
+      "url": "https://www.sciencemcp.econlabs.org/mcp",
+      "headers": { "Authorization": "Bearer a-long-random-string" }
+    }
+  }
+}
+```
+
+Clients should read parameter names from `tools/list` rather than hardcoding them. The
+MCP SDK **silently drops unknown argument names**, so a client sending a misspelled or
+outdated parameter gets the default back with no error — which is exactly how a customer
+lost a day to `limit` once being called `k`.
+
+For poking at either server by hand, `https://www.mcptest.econlabs.org` runs
+`src/SciencePcm.Inspector` on the relay. Locally:
+
+```bash
+dotnet run --project src/SciencePcm.Inspector -c Release -- --urls http://localhost:6671
+```
+
+It discovers parameters from the schema, so new tool arguments appear without a code
+change.
+
+## Refreshing the data
+
+Both corpora are produced elsewhere and pushed to the blob store; the A100 only pulls.
+
+```powershell
+# nerds21: re-ingest and upload
+.\tools\nerds21-sync.ps1
+.\tools\openalex-sync.ps1 -Force
+```
+
+```bash
+# here: prepare notices the new digest and rebuilds
+bash tools/sciencemcp-a100.sh prepare
+bash tools/openalex-a100.sh prepare
+```
+
+No `--force` flag on this side. The blob store transfers only what differs, and the index
+stamp decides whether a rebuild is needed.
+
+## Disks
+
+```
+~/mcp/data/            pulled from the cloud, disposable, ~145 GB
+/datadisk/index/       built here and only here, ~765 GB
+```
+
+`/datadisk` is local NVMe (1.4 GB/s) and ephemeral. The OpenAlex index is larger than the
+free space on the 1 TB OS disk, so **there is no durable copy** — a deallocation costs a
+full rebuild rather than an rsync. Both scripts fail rather than fall back to the OS disk
+if `/datadisk` is missing.
+
+Storage was the whole latency story once: the index on a managed disk gave 95% iowait and
+6s queries. Moving it to NVMe took a short query to 1.24s, and parallel segment search
+took a long one from 5.66s to 0.44s.
+
+## Before the reservation lapses
+
+The A100 is a working copy; nerds21 is the durable archive. Anything not in the blob
+store is lost when the reservation ends. Indexes are rebuildable and need not be kept —
+the corpora and digests are what matter, and they are already in the store.
