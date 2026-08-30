@@ -22,46 +22,16 @@ papers had abstracts throughout. See "Why landmark papers were missing".
 
 ## Fields and ranking
 
-Title, abstract, authors, institutions, venue, identifiers and topics are **separate
-indexed fields**, and a query is one dismax per term across them with per-field boosts —
-the Lucene 4 way of writing BM25F (Robertson, Zaragoza and Taylor, CIKM 2004).
+Fielded BM25F then a cross-encoder, shared with ScienceMCP — see
+[retrieval.md](retrieval.md) for the field boosts, the citation prior, deduplication and
+the approaches that were tried and rejected.
 
-| field | boost | notes |
-| --- | --- | --- |
-| `identifiers` | 4.0 | DOI, PMID, PMCID, ISSN — a match here is a certainty |
-| `title` | 3.0 | news prose names papers by title |
-| `authors` | 2.0 | analysed, for names appearing in prose |
-| `venue` | 1.5 | journal and publisher |
-| `body` | 1.0 | the abstract |
-| `institutions` | 1.0 | "MIT economists ..." |
-| `topics_search` | 1.0 | topics and keywords |
-
-Per-field normalisation is the point. Under the previous single concatenated field, a
-765-author trial paper was 27x the average document length and BM25 scaled every term to
-8.5% of its value — the decisive `chadox1` term, IDF 11.74, contributed 1.0 out of 14.4.
-Now the author list can only dilute `authors`, and title and abstract keep their own
-lengths. On a synthetic index reproducing that case, the target went from rank 2 behind
-a news summary to rank 1 by a factor of 2.4.
-
-It also means abstract-less works need no special handling. They simply have no `body`
-field and compete on the fields they do have, so the corpus can hold both without a
-switch. That matters: 21.6% of 2025 articles have no abstract, rising to 29.1% among
-those with 10 or more citations.
-
-Two ranking defaults on top:
+Two defaults are specific to this service:
 
 - `--exclude-types peer-review,dataset,paratext` drops work types OpenAlex records as
   separate works titled after the paper they discuss.
-- `--citation-prior 1.0` multiplies the BM25 score by up to `1 + weight`, scaled by
-  `log10(1 + cited_by_count)`. Capped and multiplicative, so citations break ties between
-  topically similar documents but never promote an irrelevant one. Disabled when a
-  non-relevance sort is requested.
-
-Results are deduplicated by title to the **best-cited** record: OpenAlex holds the same
-paper more than once, and the copies carry few or no citations.
-
-`--max-doc-freq-ratio` and `--bm25-b` have been removed. Both existed only to compensate
-for the concatenated field.
+- `--citation-prior 1.0`, which matters more here than for ScienceMCP because the corpus
+  holds the errata, commentaries and duplicate records that quote a paper's title.
 
 ## Filters
 
@@ -78,41 +48,20 @@ on, and reordering would defeat the sort that was asked for.
 
 ## Why landmark papers were missing
 
-Four papers known to be in OpenAlex were absent from the top 50 of queries that named
-them. `eval/known_item.py` scores this without an LLM, and `OpenAlex.Index explain`
-prints Lucene's own account of a score. The explanation for the ChAdOx1 paper:
+Worth reading before touching ranking: four papers known to be in OpenAlex were absent
+from the top 50 of queries that named them, and the cause was neither the corpus nor the
+reranker. The investigation, the Lucene `explain` output and the false trail that cost a
+day are in [retrieval.md](retrieval.md#diagnosing-a-missing-paper).
 
-```
-fieldLength    = 2621.44
-avgFieldLength =   96.71
-chadox1: idf=11.74 (docFreq 3,874)  x  tfNorm=0.0856  =  1.005
-total = 14.41
-```
+The short version: `SearchableText` concatenated all 765 author names into one searched
+field, making the ChAdOx1 paper 27x the average document length, so BM25 scaled its
+decisive `chadox1` term — IDF 11.74 — down to 1.005 out of a total 14.41. The fielded
+schema fixed it by construction.
 
-The rarest, most decisive term in the query contributed 1.005 out of 14.41, because the
-document is 27x the average length and BM25 divides by that. It was long because
-`SearchableText` concatenated all 765 author names and 64 institutions — 15,000
-characters, about 80% of the document. Papers by large collaborations were therefore
-buried under the news pieces, errata and commentaries written about them, while papers
-with short author lists ranked first.
-
-Author and institution lists are now capped at 400 characters each in the indexed text,
-which takes that document from ~2,621 tokens to ~300. News prose names lead authors, so
-the cap keeps the useful part.
-
-The false trail is worth recording. The paper was first reported absent from the digest
-by a `WHERE lower(title) LIKE '%...%' LIMIT 10` query — ten arbitrary rows out of
-thousands of matches, which returned only reviews and commentaries. A truncated,
-unordered query cannot prove absence. Everything downstream of that reading, including
-the decision to index title-only works, was aimed at a problem that did not exist.
-
-
-
-The v3 digest is designed to resolve paper mentions in newspaper articles. In addition
+The digest is designed to resolve paper mentions in newspaper articles. In addition
 to title and abstract it retains publication date/year, authors, institutions, journal,
 ISSN, DOI, PMID, language, work type, citation count, volume/issue/pages, topics,
-keywords and retraction status. Lucene searches title, abstract, authors, institutions,
-journal, DOI, ISSN, topics and keywords; the other fields are returned for verification.
+keywords and retraction status.
 
 ## Why there is no Semantic Scholar merge
 

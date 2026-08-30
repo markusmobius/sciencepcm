@@ -1,7 +1,7 @@
 """Run a paired LlmClient evaluation with and without the sciencemcp tool.
 
 This script generates answers and durable run records. It deliberately does not grade
-them; follow README_SCIENCEMCP_EVAL.MD to blind and score the resulting answers.
+them; follow doc/evaluation.md to blind and score the resulting answers.
 """
 
 from __future__ import annotations
