@@ -3,4 +3,6 @@ numpy>=1.26
 requests>=2.32
 
 # judge.py. Needs LLM_SERVER_URL, LLM_USER_CODE and LLM_CACHE in the environment.
-newsprinceton-llmclient @ git+https://github.com/markusmobius/newsprinceton-llmclient
+# Named llmclient, not newsprinceton-llmclient: uv rejects a direct reference whose
+# name does not match the package metadata, where pip only warns.
+llmclient @ git+https://github.com/markusmobius/newsprinceton-llmclient
