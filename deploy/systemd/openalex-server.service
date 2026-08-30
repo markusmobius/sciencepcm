@@ -1,7 +1,8 @@
 # OpenAlex MCP server (GPU box). Second service, same box, own port and token.
 #
-# serve restores the NVMe index copy first when /datadisk has been wiped, so there is no
-# separate restore unit to order against.
+# serve restores the NVMe index copy first when /datadisk has been wiped. Both services
+# restore from the same managed disk and take a shared flock, so they queue rather than
+# competing for its read bandwidth - which is why no ordering between the units is needed.
 #
 # Install:
 #   cd ~/sciencepcm && bash tools/openalex-a100.sh prepare   # digest + model + index

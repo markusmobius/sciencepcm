@@ -23,6 +23,7 @@ fi
 ABSTRACTS_INDEX="$INDEX_ROOT/abstracts-bm25"
 PASSAGE_INDEX="$INDEX_ROOT/passages-bm25"
 CORPUS="${SCIENCEPCM_CORPUS:-$DATA_ROOT/sciencepcm}"
+RESTORE_LOCK="${TMPDIR:-/tmp}/sciencepcm-restore.lock"
 COMMAND="${1:-serve}"
 
 size_of() {
@@ -61,7 +62,8 @@ restore() {
 
         echo "restoring $name from $durable"
         mkdir -p "$fast"
-        rsync -a --delete --info=stats2 "$durable/" "$fast/"
+        # Serialised against the OpenAlex restore: both read from the same managed disk.
+        ( flock 9; rsync -a --delete --info=stats2 "$durable/" "$fast/" ) 9>"$RESTORE_LOCK"
     done
 }
 

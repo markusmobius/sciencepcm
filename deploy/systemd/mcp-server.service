@@ -1,5 +1,9 @@
 # SciencePCM MCP server (GPU box).
 #
+# serve restores the NVMe index copies first when /datadisk has been wiped, under a
+# shared flock so it queues behind openalex-server's restore rather than competing with
+# it for the managed disk.
+#
 # Install:
 #   cd ~/sciencepcm && bash tools/gcr-prep.sh          # models + indexes first
 #   echo 'SCIENCEPCM_TOKEN=your-long-random-string' | sudo tee /etc/sciencepcm.env

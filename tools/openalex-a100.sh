@@ -30,6 +30,7 @@ else
 fi
 
 STAMP="index-stamp.json"
+RESTORE_LOCK="${TMPDIR:-/tmp}/sciencepcm-restore.lock"
 COMMAND="${1:-prepare}"
 
 has_digest() {
@@ -64,7 +65,10 @@ restore() {
 
     echo "restoring index from $DURABLE_INDEX to $FAST_INDEX"
     mkdir -p "$FAST_INDEX"
-    rsync -a --delete --info=stats2 "$DURABLE_INDEX/" "$FAST_INDEX/"
+    # Both services restore from the same managed disk. Without the lock they run
+    # concurrently after a deallocation and halve each other's read bandwidth; the lock
+    # works however they were started, which systemd ordering would not.
+    ( flock 9; rsync -a --delete --info=stats2 "$DURABLE_INDEX/" "$FAST_INDEX/" ) 9>"$RESTORE_LOCK"
 }
 
 free_gb() {
