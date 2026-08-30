@@ -438,3 +438,7 @@ __pycache__/
 
 # RemoteBlobStore local cache (holds full-size artifact copies)
 .artifact-cache/
+
+# Bearer tokens for running eval against the live endpoints. Dot-source before use:
+#   . .\tokens.local.ps1
+tokens.local.ps1
