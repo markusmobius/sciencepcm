@@ -53,6 +53,15 @@ class McpSession:
         if returned:
             self.session_id = returned
 
+        # Each endpoint has its own bearer token, so a raised HTTPError here is nearly
+        # always the wrong one rather than a broken server.
+        if response.status_code in (401, 403):
+            sent = "no token" if "Authorization" not in self.http.headers else "a token"
+            raise SystemExit(
+                f"{response.status_code} from {self.endpoint} - sent {sent}. "
+                "Pass --token, or export the variable this endpoint expects."
+            )
+
         response.raise_for_status()
         return response
 
