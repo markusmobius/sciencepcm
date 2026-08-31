@@ -2,8 +2,7 @@
 
 Both services share one engine: `src/SciencePcm.Index/LexicalIndex.cs` for the index
 and query, `src/SciencePcm.Server/RetrievalService.cs` for the pipeline. A query is BM25F
-over a fielded Lucene index and a `bge-reranker-v2-m3` cross-encoder over the top 100,
-**fused by reciprocal rank** rather than one replacing the other.
+over a fielded Lucene index, then a `bge-reranker-v2-m3` cross-encoder over the top 100.
 
 ## Fielded BM25F
 
@@ -63,30 +62,6 @@ OpenAlex holds the same paper more than once — a preprint, a stub typed `other
 merged-but-not-removed record — and the copies carry few or no citations, so keeping
 whichever scored highest discarded the canonical one.
 
-## Fusing the two stages
-
-The cross-encoder score does not replace the BM25 ordering; the two rankings are combined
-with reciprocal rank fusion, `1/(60 + rank)` summed over both. Sorting on the
-cross-encoder logit alone throws away BM25 *and* the citation prior folded into it, and
-the two scores are on unrelated scales so they cannot simply be added.
-
-Measured on the live endpoint, 30 topical queries, 418 pooled LLM judgements:
-
-| system | nDCG@10 | mean grade | % >=2 | hit@1 | MRR |
-| --- | --- | --- | --- | --- | --- |
-| BM25F + citation prior | 0.6277 | 1.618 | 49.5% | 73.3% | 0.808 |
-| **fused with the cross-encoder** | **0.8686** | **2.063** | **66.7%** | **90.0%** | **0.928** |
-
-The trade-off is real but lopsided. On the two known-item landmark sets BM25 alone is
-*better* — MRR 0.875 and 0.786, against 0.667 and 0.653 fused — because a known-item query
-is an identity lookup that BM25F plus the citation prior already answers, and the
-cross-encoder only adds noise. Eight unjudged known-item queries do not outweigh 30 judged
-topical ones, and topical questions are what the services are for.
-
-Not to be confused with the rejected *BM25 + dense* fusion below. Fusing two rankings of
-very different quality dilutes the stronger one; fusing two of comparable quality that
-fail differently is the case RRF is for.
-
 ## Rejected
 
 Kept here because re-proposing them costs a day each. The scripts that produced these
@@ -97,6 +72,7 @@ these are the surviving record.
 | --- | --- |
 | dense retrieval (MedCPT) | 0.117 nDCG@10 HNSW, 0.125 exact, against BM25's 0.2255. Not a bug: stored vectors re-encoded with PyTorch matched at cosine 1.0000 on 198/198, and HNSW cost only ~6% against brute force. |
 | RRF fusion of BM25 + dense | recall@100 0.4639 → 0.4736, and nDCG@10 *dropped*: fusion dilutes the stronger system. With rerank, 0.7647 against 0.7713 for BM25 + rerank. Noise. |
+| RRF fusion of BM25 + cross-encoder | Same lesson, retested against the live endpoint. Three arms, 30 topical queries, one pool: BM25 only 0.5701 nDCG@10, **rerank-only 0.8172**, RRF-fused 0.7758. hit@1 and MRR tied at 90.0% / 0.928 for the last two, so fusion only cost accuracy in the deeper ranks. It was worse on known-item too (landmark MRR 0.750 → 0.667). Reverted. |
 | MedCPT encoder variants | Reference usage (pair input, raw dot product) beat ours (concatenated, cosine) 0.7586 to 0.7134 on a small pool. Real, but ~6% on the leg that lost anyway. |
 | `--max-doc-freq-ratio` | Changed results, improved nothing. Removed. |
 | `--bm25-b` | Length normalisation is not the lever once fields are separate. Removed. |

@@ -40,10 +40,12 @@ fraction relevant, hit@1, hit@k and MRR.
 
 ```bash
 $LAB eval/mcp_run.py --endpoint $OA --token "$OPENALEX_TOKEN" \
-  --questions eval/questions-newsmatch.jsonl --tool search_openalex --out runs/v3.jsonl
+  --queries eval/questions-newsmatch.jsonl --tool search_openalex --out runs/v3.jsonl
 
 $LAB eval/judge.py --run runs/v3.jsonl --prompt-file eval/prompts/newsmatch.txt \
-  --unit paper --workers 32
+  --queries eval/questions-newsmatch.jsonl \
+  --articles '~/mcp/data/openalex/abstracts/*.parquet' \
+  --unit paper --sample 30 --workers 32
 ```
 
 Two things to hold onto. **Graded nDCG normalises against the pool**, so absolute values

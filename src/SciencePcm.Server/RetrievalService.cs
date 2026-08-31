@@ -141,42 +141,23 @@ public sealed class RetrievalService : IDisposable
 
         var scores = Rerank(query, candidates);
 
-        var reranked = Fuse(candidates, scores)
-            .Select(fused => ToResult(fused.Hit, fused.Score, "bm25+rerank"))
+        var reranked = candidates
+            .Select((hit, index) => ToResult(hit, (float)(scores[index] + CitationPrior(hit)), "bm25+rerank"))
             .OrderByDescending(r => r.Score);
 
         return Deduplicate(reranked).Take(k).ToList();
     }
 
     /// <summary>
-    /// Reciprocal rank fusion of the retrieval order with the cross-encoder order.
-    ///
-    /// Sorting on the cross-encoder score alone discards BM25 entirely, including the
-    /// citation prior folded into it - measured as worse than not reranking at all on the
-    /// landmark sets. The two scores are on unrelated scales and cannot be added, so their
-    /// ranks are combined instead. 60 is the constant from the original TREC work; results
-    /// are famously insensitive to it.
+    /// Citation counts are missing or wrong on duplicate records, so this only ever adds -
+    /// a paper with no recorded citations keeps its rerank score rather than being pushed
+    /// down.
     /// </summary>
-    private const int RrfK = 60;
-
-    private static IEnumerable<(LexicalHit Hit, float Score)> Fuse(
-        IReadOnlyList<LexicalHit> candidates, float[] rerankScores)
+    private double CitationPrior(LexicalHit hit)
     {
-        var rerankRank = new int[candidates.Count];
-        var byScore = Enumerable.Range(0, candidates.Count)
-            .OrderByDescending(index => rerankScores[index])
-            .ToArray();
-        for (var position = 0; position < byScore.Length; position++)
-        {
-            rerankRank[byScore[position]] = position + 1;
-        }
-
-        for (var index = 0; index < candidates.Count; index++)
-        {
-            // Candidates arrive in retrieval order, so index + 1 is the BM25 rank.
-            var fused = 1.0 / (RrfK + index + 1) + 1.0 / (RrfK + rerankRank[index]);
-            yield return (candidates[index], (float)fused);
-        }
+        if (_options.CitationPriorWeight <= 0) return 0;
+        var citations = hit.Metadata?.CitedByCount ?? 0;
+        return citations <= 0 ? 0 : _options.CitationPriorWeight * Math.Log10(1 + citations);
     }
 
     public SearchResult? GetPaper(string articleKey)
@@ -212,8 +193,8 @@ public sealed class RetrievalService : IDisposable
         if (candidates.Count == 0) return [];
 
         var scores = Rerank(query, candidates);
-        var ranked = Fuse(candidates, scores)
-            .Select(fused => ToResult(fused.Hit, fused.Score, "bm25+rerank"))
+        var ranked = candidates
+            .Select((hit, index) => ToResult(hit, scores[index], "bm25+rerank"))
             .OrderByDescending(r => r.Score);
 
         return CapPerArticle(ranked, Math.Max(1, maxPerArticle)).Take(k).ToList();
