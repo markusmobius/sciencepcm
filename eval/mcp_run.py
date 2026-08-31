@@ -92,25 +92,49 @@ class McpSession:
         return json.loads(text)
 
 
+def extract_hits(payload) -> list[dict]:
+    """Servers answer with a bare list or wrap it, under one of several names.
+
+    Guessing wrong yields an empty run rather than an error, which scores as a total
+    failure and looks like a broken system instead of a broken harness.
+    """
+    if isinstance(payload, list):
+        return payload
+    if isinstance(payload, dict):
+        for key in ("results", "works", "hits", "papers", "documents"):
+            if isinstance(payload.get(key), list):
+                return payload[key]
+    raise RuntimeError(f"no list of hits in response: {json.dumps(payload)[:300]}")
+
+
+def _flatten(value) -> str:
+    if isinstance(value, (list, tuple)):
+        return "; ".join(str(item) for item in value if item)
+    return str(value)
+
+
 def compose_text(hit: dict) -> str:
     """Title, identifying metadata, then body.
 
     Known-item matching turns on author, institution and venue, so the judge has to see
-    them. Fields absent from a given server are simply skipped.
+    them. Fields absent from a given server are simply skipped, and the alternative names
+    are there so two servers' results reach the judge in the same shape.
     """
     parts = []
     if hit.get("title"):
         parts.append(str(hit["title"]))
 
     meta = [
-        str(hit[field])
-        for field in ("authors", "institutions", "journal", "publication_date", "year", "doi", "pmid")
+        _flatten(hit[field])
+        for field in ("authors", "institutions", "universities", "journal", "venue",
+                      "publication_date", "year", "publication_year", "doi", "pmid")
         if hit.get(field)
     ]
     if meta:
         parts.append(" | ".join(meta))
 
-    body = hit.get("text") or hit.get("abstract_excerpt") or hit.get("abstract") or ""
+    body = (hit.get("text") or hit.get("abstract_excerpt") or hit.get("abstract_snippet")
+            or hit.get("abstract") or "")
     if body:
         parts.append(str(body))
 
@@ -134,7 +158,9 @@ def main() -> int:
         "--id-field",
         default="article_key",
         help="What identifies a hit. Use passage_id for search_full_text, so that two "
-        "passages from one paper stay distinct.",
+        "passages from one paper stay distinct. Comparing two servers, pick fields that "
+        "share an id space - openalex_id here, id on the older academic server, both "
+        "being https://openalex.org/W...",
     )
     parser.add_argument("--k", type=int, default=10)
     parser.add_argument("--section", default=None, help="Full-text only.")
@@ -176,7 +202,7 @@ def main() -> int:
         hits = []
         scores = []
         texts = []
-        for hit in payload.get("results", []):
+        for hit in extract_hits(payload):
             hits.append(hit.get(args.id_field) or hit.get("article_key", ""))
             scores.append(hit.get("score", 0.0))
             # Carried along so the judge can grade what the server actually returned,
