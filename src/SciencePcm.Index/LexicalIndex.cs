@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Lucene.Net.Analysis;
 using Lucene.Net.Analysis.En;
 using Lucene.Net.Documents;
@@ -202,6 +203,34 @@ public static class LexicalIndex
                    .Where(name => name.Length > 1)
                    .Distinct();
 
+    /// <summary>
+    /// Splits an author or journal filter into terms, and says whether all must match.
+    ///
+    /// "A OR B" and "A; B" mean either; "A AND B" means both, which for authors is
+    /// co-authorship. Uppercase because that is the Lucene and PubMed convention callers
+    /// already know, and because "and" appears inside real venue names. One operator per
+    /// filter: mixing them needs precedence the caller cannot see, so it is refused rather
+    /// than guessed at.
+    /// </summary>
+    public static (IReadOnlyList<string> Terms, bool RequireAll) ParseNameList(string value)
+    {
+        var hasAnd = Regex.IsMatch(value, @"\s+AND\s+");
+        var hasOr = Regex.IsMatch(value, @"\s+OR\s+") || value.Contains(';');
+        if (hasAnd && hasOr)
+        {
+            throw new ArgumentException("Use AND or OR in one filter, not both.");
+        }
+
+        var terms = Regex.Split(value, hasAnd ? @"\s+AND\s+" : @"\s+OR\s+|;")
+            .Select(term => term.Trim())
+            .Where(term => term.Length > 0)
+            .Take(10)
+            .ToList();
+
+        if (terms.Count == 0) throw new ArgumentException("Filter names nothing.");
+        return (terms, hasAnd);
+    }
+
     private static string Join(params string?[] values) =>
         string.Join(". ", values.Where(value => !string.IsNullOrWhiteSpace(value)));
 
@@ -373,12 +402,12 @@ public sealed class LexicalSearcher : IDisposable
 
             if (hasAuthor)
             {
-                combined.Add(NameFilter(LexicalIndex.AuthorsField, author!, 2), Occur.MUST);
+                combined.Add(NameListFilter(LexicalIndex.AuthorsField, author!, 2, "author", true), Occur.MUST);
             }
 
             if (hasJournal)
             {
-                combined.Add(NameFilter(LexicalIndex.VenueField, journal!, 0), Occur.MUST);
+                combined.Add(NameListFilter(LexicalIndex.VenueField, journal!, 0, "journal", false), Occur.MUST);
             }
 
             if (yearMin is not null || yearMax is not null)
@@ -459,6 +488,29 @@ public sealed class LexicalSearcher : IDisposable
     private Query NameFilter(string field, string value, int slop) =>
         new QueryBuilder(_analyzer).CreatePhraseQuery(field, value.Trim(), slop)
         ?? new TermQuery(new Term(field, value.Trim().ToLowerInvariant()));
+
+    /// <summary>One or several names, combined per the AND/OR the caller used.</summary>
+    /// <param name="allowAll">
+    /// False for journals: a work has one venue, so AND there can only ever return
+    /// nothing, and an empty result reads as "no such papers" rather than as a mistake.
+    /// </param>
+    private Query NameListFilter(string field, string value, int slop, string label, bool allowAll)
+    {
+        var (terms, requireAll) = LexicalIndex.ParseNameList(value);
+        if (requireAll && !allowAll)
+        {
+            throw new ArgumentException($"{label} cannot use AND: a work has one {label}. Use OR.");
+        }
+        if (terms.Count == 1) return NameFilter(field, terms[0], slop);
+
+        var combined = new BooleanQuery();
+        foreach (var term in terms)
+        {
+            combined.Add(NameFilter(field, term, slop), requireAll ? Occur.MUST : Occur.SHOULD);
+        }
+        if (!requireAll) combined.MinimumNumberShouldMatch = 1;
+        return combined;
+    }
 
     /// <summary>
     /// One dismax per query term across the searchable fields, which is how Lucene 4

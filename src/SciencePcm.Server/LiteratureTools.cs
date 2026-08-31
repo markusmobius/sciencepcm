@@ -34,9 +34,12 @@ public sealed class LiteratureTools(RetrievalService retrieval)
         [Description("How many papers to return. Default 10, maximum 50.")] int limit = 10,
         [Description("Author name. A surname alone is most reliable, for example 'Doudna'; " +
             "either 'Jennifer Doudna' or 'Doudna, Jennifer' also works, but a fuller name only " +
-            "matches records that spell it that way. Retry with the surname alone if empty.")] string author = "",
+            "matches records that spell it that way. Combine with OR for either researcher, or " +
+            "AND for their co-authored papers only: 'Doudna OR Charpentier', 'Doudna AND " +
+            "Charpentier'. Retry with the surname alone if empty.")] string author = "",
         [Description("Journal name, matched as a phrase, so 'Nature Neuroscience' finds it. " +
-            "One journal at a time.")] string journal = "",
+            "Combine with OR: 'Nature OR Science'. AND is not accepted, since a paper has one " +
+            "venue.")] string journal = "",
         [Description("Order: relevance (default), citations, or year.")] string sort = "",
         [Description("Only include papers published in or after this year.")] int? yearMin = null,
         [Description("Only include papers published in or before this year.")] int? yearMax = null,
@@ -53,9 +56,19 @@ public sealed class LiteratureTools(RetrievalService retrieval)
             return "{\"error\": \"sort must be relevance, citations or year\"}";
         }
 
-        var results = retrieval.Search(
-            query, Math.Clamp(limit, 1, 50), yearMin, yearMax, rerank: !fast,
-            author: author, journal: journal, sort: order);
+        IReadOnlyList<SearchResult> results;
+        try
+        {
+            results = retrieval.Search(
+                query, Math.Clamp(limit, 1, 50), yearMin, yearMax, rerank: !fast,
+                author: author, journal: journal, sort: order);
+        }
+        catch (ArgumentException ex)
+        {
+            // A malformed filter must say so: returning no results reads as "no such
+            // papers", which is what sent callers looking for a corpus gap.
+            return JsonSerializer.Serialize(new { error = ex.Message });
+        }
 
         return JsonSerializer.Serialize(new
         {
