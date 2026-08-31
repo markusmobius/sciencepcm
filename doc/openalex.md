@@ -95,6 +95,24 @@ sift. The cross-encoder is not the weak stage: on the landmark set it lifted pap
 BM25 rank 14 to rank 1, and rescued papers BM25 ranked outside its own top 50. When a
 paper is missing from results, look at the first stage.
 
+## Against the previous server
+
+`www.academic.econlabs.org` serves the same OpenAlex corpus through an older stack.
+Both return `https://openalex.org/W...` ids, so their results pool into one judged set.
+30 topical queries, 570 pooled judgements, one judge run:
+
+| system | nDCG@10 | mean grade | % >=2 | hit@1 | hit@k | MRR |
+| --- | --- | --- | --- | --- | --- | --- |
+| academic (previous) | 0.5966 | 1.770 | 57.0% | 66.7% | 93.3% | 0.773 |
+| **this service** | **0.7877** | **2.123** | **68.3%** | **90.0%** | **96.7%** | **0.928** |
+
+Only about 2 of every 10 results were shared, so the two disagree on most of what they
+return, and the judged difference is not a reordering of the same set.
+
+Reproduce with `--tool search_works --id-field id` against the old endpoint and
+`--tool search_openalex --id-field openalex_id` against this one; pass `--token`
+explicitly, since the two endpoints take different bearer tokens.
+
 ## Programs
 
 | Program | Runs on | Purpose |
