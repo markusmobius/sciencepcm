@@ -373,12 +373,12 @@ public sealed class LexicalSearcher : IDisposable
 
             if (hasAuthor)
             {
-                combined.Add(NameFilter(LexicalIndex.AuthorsField, author!), Occur.MUST);
+                combined.Add(NameFilter(LexicalIndex.AuthorsField, author!, 2), Occur.MUST);
             }
 
             if (hasJournal)
             {
-                combined.Add(NameFilter(LexicalIndex.VenueField, journal!), Occur.MUST);
+                combined.Add(NameFilter(LexicalIndex.VenueField, journal!, 0), Occur.MUST);
             }
 
             if (yearMin is not null || yearMax is not null)
@@ -451,8 +451,13 @@ public sealed class LexicalSearcher : IDisposable
     /// Lancet". A phrase over the analysed field matches all of those without the caller
     /// having to guess the stored form.
     /// </summary>
-    private Query NameFilter(string field, string value) =>
-        new QueryBuilder(_analyzer).CreatePhraseQuery(field, value.Trim())
+    /// <param name="slop">
+    /// 2 for names, so "Rosenblat, Tanya" still matches "Tanya Rosenblat" - a transposition
+    /// of two adjacent terms. Callers, and LLMs especially, pick either order. 0 for
+    /// journals, where word order carries meaning.
+    /// </param>
+    private Query NameFilter(string field, string value, int slop) =>
+        new QueryBuilder(_analyzer).CreatePhraseQuery(field, value.Trim(), slop)
         ?? new TermQuery(new Term(field, value.Trim().ToLowerInvariant()));
 
     /// <summary>

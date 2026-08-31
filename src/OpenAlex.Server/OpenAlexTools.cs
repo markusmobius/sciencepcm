@@ -17,16 +17,19 @@ public sealed class OpenAlexTools(RetrievalService retrieval)
         "question, a claim or passage from a newspaper article, or remembered bibliographic clues. " +
         "Title, abstract, authors, institutions, journal, identifiers and topics are separate " +
         "indexed fields, matched together and weighted, before a cross-encoder reranks candidates. " +
-        "Set author or journal to restrict rather than merely favour: author expects the OpenAlex " +
-        "form 'Surname, Given' and matches exactly, so use it to list a researcher's papers. " +
+        "Set author or journal to restrict rather than merely favour: both match the stored name as " +
+        "a phrase, so a surname alone is the reliable way to list a researcher's papers. " +
         "With author or journal set, query may be omitted, and sort=citations or sort=year is " +
         "usually what you want, since relevance means little when browsing. " +
         "Works without abstracts are included and are about a fifth of recent articles.")]
     public string SearchOpenAlex(
         [Description("A question, news passage, claim, title fragment, institution or identifier. Optional when author or journal is set.")] string query = "",
         [Description("How many works to return. Default 10, maximum 50.")] int limit = 10,
-        [Description("Exact author, as OpenAlex writes it, for example 'Duflo, Esther'.")] string author = "",
-        [Description("Exact journal name, for example 'The Lancet'.")] string journal = "",
+        [Description("Author name. A surname alone is most reliable, for example 'Rosenblat'; " +
+            "either 'Tanya Rosenblat' or 'Rosenblat, Tanya' also works, but a fuller name only " +
+            "matches records that spell it that way. Retry with the surname alone if empty.")] string author = "",
+        [Description("Journal name, matched as a phrase, so 'Lancet' finds 'The Lancet'. " +
+            "One journal at a time.")] string journal = "",
         [Description("Order: relevance (default), citations, or year.")] string sort = "",
         [Description("Only include works published in or after this year.")] int? yearMin = null,
         [Description("Only include works published in or before this year.")] int? yearMax = null,

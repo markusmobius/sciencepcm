@@ -25,15 +25,18 @@ public sealed class LiteratureTools(RetrievalService retrieval)
         "terminology to your question may not be found at all: if results look thin or you " +
         "suspect other wording exists (a gene symbol vs its full name, 'chromosome' vs " +
         "'genetics'), CALL THIS AGAIN with the alternative terms and merge what you get. " +
-        "Set author or journal to restrict rather than merely favour: author expects the form " +
-        "'Surname, Given' and matches exactly, so use it to list a researcher's papers. With " +
+        "Set author or journal to restrict rather than merely favour: both match the stored name " +
+        "as a phrase, so a surname alone is the reliable way to list a researcher's papers. With " +
         "author or journal set, query may be omitted, and sort=citations or sort=year is " +
         "usually what you want, since relevance means little when browsing.")]
     public string SearchLiterature(
         [Description("The research question, in natural language. Optional when author or journal is set.")] string query = "",
         [Description("How many papers to return. Default 10, maximum 50.")] int limit = 10,
-        [Description("Exact author, for example 'Doudna, Jennifer'.")] string author = "",
-        [Description("Exact journal name, for example 'Nature Neuroscience'.")] string journal = "",
+        [Description("Author name. A surname alone is most reliable, for example 'Doudna'; " +
+            "either 'Jennifer Doudna' or 'Doudna, Jennifer' also works, but a fuller name only " +
+            "matches records that spell it that way. Retry with the surname alone if empty.")] string author = "",
+        [Description("Journal name, matched as a phrase, so 'Nature Neuroscience' finds it. " +
+            "One journal at a time.")] string journal = "",
         [Description("Order: relevance (default), citations, or year.")] string sort = "",
         [Description("Only include papers published in or after this year.")] int? yearMin = null,
         [Description("Only include papers published in or before this year.")] int? yearMax = null,
