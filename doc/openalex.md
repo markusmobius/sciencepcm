@@ -89,6 +89,10 @@ reached hit@1 40.0% and hit@10 76.7%, against 23.3% and 70.0% for
 `cross-encoder/ms-marco-MiniLM-L-6-v2`, for about 475 ms more per query. It is XLM-R
 based, so unlike the previous reranker it matches the multilingual corpus.
 
+That 40.0% was measured on the v2 corpus with the old concatenated search field. The same
+query set against the live service now reaches hit@1 80.0% and hit@10 96.7% — the
+reranker is unchanged, so the gain is the v3 corpus and the fielded schema underneath it.
+
 `--rerank-candidates` stays at 100. Raising it to 500 changed nothing, and 1,000 made
 the landmark set slightly worse — a deeper pool is more noise for the cross-encoder to
 sift. The cross-encoder is not the weak stage: on the landmark set it lifted papers from
@@ -99,12 +103,29 @@ paper is missing from results, look at the first stage.
 
 `www.academic.econlabs.org` serves the same OpenAlex corpus through an older stack.
 Both return `https://openalex.org/W...` ids, so their results pool into one judged set.
-30 topical queries, 570 pooled judgements, one judge run:
+30 queries per set, one judge run each.
+
+Topical questions, 570 pooled judgements:
 
 | system | nDCG@10 | mean grade | % >=2 | hit@1 | hit@k | MRR |
 | --- | --- | --- | --- | --- | --- | --- |
 | academic (previous) | 0.5966 | 1.770 | 57.0% | 66.7% | 93.3% | 0.773 |
 | **this service** | **0.7877** | **2.123** | **68.3%** | **90.0%** | **96.7%** | **0.928** |
+
+News-to-paper known-item matching, 569 pooled judgements, `prompts/newsmatch.txt`:
+
+| system | nDCG@10 | % >=2 | hit@1 | hit@k | MRR |
+| --- | --- | --- | --- | --- | --- |
+| academic (previous) | 0.4843 | 11.7% | 20.0% | 46.7% | 0.271 |
+| **this service** | **0.8421** | **21.7%** | **80.0%** | **96.7%** | **0.861** |
+
+The known-item gap is the larger one, and `hit@k` is where it shows: the previous server
+never returned the described paper at all on 53% of queries, so no amount of reranking
+could have saved it. That is a first-stage difference — the fielded schema and the v3
+corpus — not a reranker difference.
+
+Read hit@1 and MRR here, not mean grade. Only one of ten results can be the paper being
+described, so `% >=2` is capped near 20% by construction and both systems look weak on it.
 
 Only about 2 of every 10 results were shared, so the two disagree on most of what they
 return, and the judged difference is not a reordering of the same set.
