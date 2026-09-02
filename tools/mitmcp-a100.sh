@@ -113,12 +113,15 @@ check() {
         echo "  sudo chown \"\$(id -u):\$(id -g)\" $FAST_ROOT" >&2
         return 1
     }
-    [[ -d "$ABSTRACTS_INDEX" ]] || { echo "no abstracts index; run: bash tools/mitmcp-a100.sh prepare" >&2; return 1; }
-    [[ -f "$MODEL/model.onnx" ]] || { echo "no reranker; run: bash tools/gcr-prep.sh" >&2; return 1; }
 }
 
 serve() {
     check
+
+    # Asserted here rather than in check, which prepare calls before it has built either.
+    [[ -d "$ABSTRACTS_INDEX" ]] || { echo "no abstracts index; run: bash tools/mitmcp-a100.sh prepare" >&2; exit 1; }
+    [[ -f "$MODEL/model.onnx" ]] || { echo "no reranker; run: bash tools/mitmcp-a100.sh prepare" >&2; exit 1; }
+
     local passage_args=()
     [[ -d "$PASSAGE_INDEX" ]] && passage_args=(--passage-index "$PASSAGE_INDEX")
 
