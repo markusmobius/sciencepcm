@@ -16,6 +16,20 @@
       }
     },
     {
+      "name": "MITMCP",
+      "url": "https://www.mitmcp.econlabs.org/mcp",
+      "toolOrder": [ "search_literature", "search_full_text" ],
+      "suggestions": {
+        "search_literature": {
+          "query": "Graph-theoretic measures of modularity in functional brain networks"
+        },
+        "search_full_text": {
+          "query": "How were event-related potentials time-locked to stimulus onset?",
+          "section": "Methods"
+        }
+      }
+    },
+    {
       "name": "newalexmcp",
       "url": "https://www.openalexmcp.econlabs.org/mcp",
       "toolOrder": [ "search_openalex", "get_openalex_work", "openalex_corpus_stats" ],
