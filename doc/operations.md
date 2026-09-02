@@ -1,23 +1,24 @@
 # Operations
 
-Day-to-day running of both services. Provisioning a fresh box is
+Day-to-day running of the three services. Provisioning a fresh box is
 [provisioning.md](provisioning.md); this assumes that is done.
 
 ## Secrets
 
-Three, all living in the installed unit files rather than the repo: a bearer token per
+Four, all living in the installed unit files rather than the repo: a bearer token per
 service, and the blob-store client hash `mcp-prepare` needs to pull the digest.
 
-`tools/gcr-prep.sh` asks for all three when it installs the units, and asks again on every
+`tools/gcr-prep.sh` asks for all four when it installs the units, and asks again on every
 re-run so nothing is silently carried forward unseen. A blank answer keeps whatever is
 already in the installed unit, or failing that the matching variable from your shell
-(`$SCIENCEPCM_TOKEN`, `$OPENALEX_TOKEN`, `$legopds_clienthash` or
+(`$SCIENCEPCM_TOKEN`, `$OPENALEX_TOKEN`, `$MITMCP_TOKEN`, `$legopds_clienthash` or
 `$CLOUDPDS_CLIENT_HASH`) — the prompt says which, and how many characters it is. You can
 also `sudoedit` them afterwards:
 
 ```bash
 sudoedit /etc/systemd/system/mcp-science-server.service     # Environment="SCIENCEPCM_TOKEN=..."
 sudoedit /etc/systemd/system/mcp-openalex-server.service    # Environment="OPENALEX_TOKEN=..."
+sudoedit /etc/systemd/system/mcp-mit-server.service         # Environment="MITMCP_TOKEN=..."
 sudoedit /etc/systemd/system/mcp-prepare.service            # Environment="legopds_clienthash=..."
 sudo systemctl daemon-reload
 ```
@@ -47,6 +48,7 @@ cd ~/sciencepcm
 
 bash tools/sciencemcp-a100.sh prepare && bash tools/sciencemcp-a100.sh serve
 bash tools/openalex-a100.sh   prepare && bash tools/openalex-a100.sh   serve
+bash tools/mitmcp-a100.sh     prepare && bash tools/mitmcp-a100.sh     serve
 ```
 
 `prepare` pulls its service's data, exports the shared reranker if absent, and builds its
@@ -54,7 +56,7 @@ index only when `index-stamp.json` no longer matches the source shards and schem
 version. Safe and cheap to re-run at any time. `check` reports paths, sizes and the index
 schema version without starting anything.
 
-Both scripts pass anything after `serve` to the server, e.g.
+All three scripts pass anything after `serve` to the server, e.g.
 `serve --citation-prior 2.0`.
 
 ## As services
@@ -75,21 +77,22 @@ units by hand skips the rewrite.
 Start them when you are ready for the rebuild:
 
 ```bash
-sudo systemctl start mcp-science-server mcp-openalex-server mcp-tunnel
+sudo systemctl start mcp-science-server mcp-openalex-server mcp-mit-server mcp-tunnel
 ```
 
 | unit | job |
 | --- | --- |
-| `mcp-prepare` | runs both `prepare`s **in sequence**; the servers `Requires=` it |
+| `mcp-prepare` | runs all three `prepare`s **in sequence**; the servers `Requires=` it |
 | `mcp-science-server` | port 8080 |
 | `mcp-openalex-server` | port 8081 |
-| `mcp-tunnel` | reverse SSH, 9201→8080 and 9202→8081 |
+| `mcp-mit-server` | port 8082 |
+| `mcp-tunnel` | reverse SSH, 9201→8080, 9202→8081 and 9203→8082 |
 | `mcp-console` | the browser console — runs on the *relay*, not here |
 
-`mcp-prepare` exists because `/datadisk` is wiped on deallocation and both services then
+`mcp-prepare` exists because `/datadisk` is wiped on deallocation and the services then
 rebuild from the same slow disk. Running them in sequence rather than in parallel is the
 entire point; `TimeoutStartSec=0` because a rebuild takes hours. `systemctl status
-mcp-prepare` sitting in `activating` with both servers queued behind it is the design
+mcp-prepare` sitting in `activating` with the servers queued behind it is the design
 working, not a hang — watch it with `journalctl -u mcp-prepare -f`.
 
 ## Exposing them
@@ -98,7 +101,7 @@ The GPU box takes no inbound connections. A reverse SSH tunnel makes it appear o
 relay (`www.llmserver.econlabs.org`), where nginx terminates TLS.
 
 ```bash
-./tools/mcp-tunnel.sh                          # both forwards
+./tools/mcp-tunnel.sh                          # all three forwards
 FORWARDS="9201:8080" ./tools/mcp-tunnel.sh     # just one
 ```
 
@@ -106,6 +109,7 @@ FORWARDS="9201:8080" ./tools/mcp-tunnel.sh     # just one
 | --- | --- | --- |
 | 9201 | 8080 | `https://www.sciencemcp.econlabs.org/mcp` |
 | 9202 | 8081 | `https://www.openalexmcp.econlabs.org/mcp` |
+| 9203 | 8082 | `https://www.mitmcp.econlabs.org/mcp` |
 
 `-R` binds to the relay's loopback, so the ports are never directly exposed — only nginx
 reaches them. Verify with `ss -tlnp | grep 9201` on the relay.
@@ -167,12 +171,14 @@ Both corpora are produced elsewhere and pushed to the blob store; the A100 only 
 # nerds21: re-ingest and upload
 .\tools\nerds21-sync.ps1
 .\tools\openalex-sync.ps1 -Force
+.\tools\mit-sync.ps1
 ```
 
 ```bash
 # here: prepare notices the new digest and rebuilds
 bash tools/sciencemcp-a100.sh prepare
 bash tools/openalex-a100.sh prepare
+bash tools/mitmcp-a100.sh prepare
 ```
 
 No `--force` flag on this side. The blob store transfers only what differs, and the index

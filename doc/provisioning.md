@@ -179,4 +179,5 @@ its own `prepare`; running, exposing and refreshing are in
 source ~/mcp/env.sh
 bash tools/sciencemcp-a100.sh prepare
 bash tools/openalex-a100.sh prepare
+bash tools/mitmcp-a100.sh prepare
 ```

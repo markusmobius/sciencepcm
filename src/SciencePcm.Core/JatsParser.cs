@@ -135,8 +135,16 @@ public static partial class JatsParser
     {
         if (journalMeta is null) return;
 
-        row.Journal = journalMeta.El("journal-title-group")?.El("journal-title")?.Value.Trim()
-                      ?? journalMeta.El("journal-title")?.Value.Trim();
+        var titleGroup = journalMeta.El("journal-title-group");
+
+        // MIT Press omits <journal-title> on 57% of its articles and carries only the
+        // abbreviated forms, so those are the last resort rather than no journal at all.
+        // <abbrev-journal-title abbrev-type="publisher"> is skipped: it holds the journal
+        // id ("netn"), not a title.
+        row.Journal = titleGroup?.El("journal-title")?.Value.Trim()
+                      ?? journalMeta.El("journal-title")?.Value.Trim()
+                      ?? AbbreviatedTitle(titleGroup, "full")
+                      ?? AbbreviatedTitle(titleGroup, "pubmed");
 
         foreach (var issn in journalMeta.Els("issn"))
         {
@@ -152,6 +160,10 @@ public static partial class JatsParser
 
         row.Publisher = journalMeta.El("publisher")?.El("publisher-name")?.Value.Trim();
     }
+
+    private static string? AbbreviatedTitle(XElement? titleGroup, string abbrevType) =>
+        titleGroup.Els("abbrev-journal-title")
+            .FirstOrDefault(t => t.Attr("abbrev-type") == abbrevType)?.Value.Trim();
 
     private static void ReadTitleAndPeople(XElement? meta, ArticleRow row)
     {

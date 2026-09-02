@@ -1,0 +1,42 @@
+# MIT Press MCP server (GPU box).
+#
+# mcp-prepare.service restores or rebuilds the indexes first, and runs the three
+# services' prepare steps in sequence so they do not compete for the managed disk.
+#
+# Install with tools/gcr-prep.sh, which asks for the token and rewrites User= and the
+# /home/mobius paths for this account before copying. A domain login is often
+# mobius@microsoft.com while $HOME stays /home/mobius, and a User= systemd cannot
+# resolve fails the unit with 217/USER. Copying this file by hand skips that.
+#
+# Check on it:
+#   systemctl status mcp-mit-server
+#   journalctl -u mcp-mit-server -f
+#   curl -s localhost:8082/health
+
+[Unit]
+Description = mcp-mit-server
+After = network.target mcp-prepare.service
+Requires = mcp-prepare.service
+
+[Service]
+Type=simple
+User=mobius
+
+WorkingDirectory=/home/mobius/sciencepcm
+
+# Set in the installed copy under /etc/systemd/system, not here - editing this file
+# would commit the token. Left empty the server starts unauthenticated and says so.
+# Named separately from SCIENCEPCM_TOKEN so the two services cannot be given each
+# other's; tools/mitmcp-a100.sh maps it onto the variable the shared binary reads.
+Environment=MITMCP_TOKEN=
+
+# bash -lc, not ExecStart directly: env.sh exports the CUDA 12 and cuDNN 9 library
+# paths ONNX Runtime needs, and it is a shell script rather than a systemd-style
+# KEY=VALUE environment assignment.
+ExecStart=/bin/bash -lc 'source /home/mobius/mcp/env.sh && exec bash tools/mitmcp-a100.sh serve'
+
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target
