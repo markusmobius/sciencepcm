@@ -1,6 +1,9 @@
 using System.Text.RegularExpressions;
 using Lucene.Net.Analysis;
+using Lucene.Net.Analysis.Core;
 using Lucene.Net.Analysis.En;
+using Lucene.Net.Analysis.Miscellaneous;
+using Lucene.Net.Analysis.Standard;
 using Lucene.Net.Documents;
 using Lucene.Net.Index;
 using Lucene.Net.Queries;
@@ -40,7 +43,7 @@ public static class LexicalIndex
     /// answer the current queries, so the builder rebuilds instead of silently serving
     /// an index whose fields no longer exist.
     /// </summary>
-    public const int SchemaVersion = 2;
+    public const int SchemaVersion = 3;
 
     public const string StampFile = "index-stamp.json";
 
@@ -99,8 +102,25 @@ public static class LexicalIndex
         (TopicsSearchField, 1.0f),
     ];
 
-    /// <summary>Stemming and stopword removal matter more than exact term matching here.</summary>
-    public static Analyzer CreateAnalyzer() => new EnglishAnalyzer(Version);
+    /// <summary>
+    /// English analysis with accent folding, so names such as "Oliver" and "Olivér"
+    /// resolve to the same term while retaining stopword removal and stemming.
+    /// </summary>
+    public static Analyzer CreateAnalyzer() => new FoldingEnglishAnalyzer();
+
+    private sealed class FoldingEnglishAnalyzer : Analyzer
+    {
+        protected override TokenStreamComponents CreateComponents(string fieldName, TextReader reader)
+        {
+            var tokenizer = new StandardTokenizer(Version, reader);
+            TokenStream stream = new EnglishPossessiveFilter(Version, tokenizer);
+            stream = new LowerCaseFilter(Version, stream);
+            stream = new StopFilter(Version, stream, EnglishAnalyzer.DefaultStopSet);
+            stream = new ASCIIFoldingFilter(stream);
+            stream = new PorterStemFilter(stream);
+            return new TokenStreamComponents(tokenizer, stream);
+        }
+    }
 
     public static Document CreateDocument(ArticleDocument source)
     {

@@ -37,9 +37,9 @@ Two defaults are specific to this service:
 
 `search_openalex` takes `author`, `journal` and `sort` alongside `query`:
 
-- `author` matches the OpenAlex form exactly — `"Duflo, Esther"` — against one indexed
-  term per name, so it lists a researcher's papers rather than matching two common words.
-- `journal` matches an exact venue name.
+- `author` phrase-matches analyzed name text, accepts either `"Duflo, Esther"` or
+   `"Esther Duflo"`, and ignores diacritics. A surname alone is the broadest reliable form.
+- `journal` phrase-matches the analyzed venue name.
 - `sort` is `relevance` (default), `citations` or `year`.
 - `query` is optional when `author` or `journal` is set, which is how you browse.
 

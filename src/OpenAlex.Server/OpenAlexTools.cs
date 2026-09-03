@@ -27,7 +27,8 @@ public sealed class OpenAlexTools(RetrievalService retrieval)
         [Description("How many works to return. Default 10, maximum 50.")] int limit = 10,
         [Description("Author name. A surname alone is most reliable, for example 'Rosenblat'; " +
             "either 'Tanya Rosenblat' or 'Rosenblat, Tanya' also works, but a fuller name only " +
-            "matches records that spell it that way. Combine with OR for either researcher, or " +
+            "matches records that include those name parts. Diacritics are optional. Combine " +
+            "with OR for either researcher, or " +
             "AND for their co-authored papers only: 'Rosenblat OR Mobius', 'Rosenblat AND Mobius'. " +
             "Retry with the surname alone if empty.")] string author = "",
         [Description("Journal name, matched as a phrase, so 'Lancet' finds 'The Lancet'. Combine " +
