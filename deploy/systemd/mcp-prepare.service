@@ -1,8 +1,8 @@
-# Prepares both MCP services before either starts.
+# Prepares all three MCP services before any of them starts.
 #
-# Runs the two prepare steps in sequence, not in parallel: after a deallocation both
-# restore their index from the same managed disk, and running them concurrently only
-# halves each one's read bandwidth. The server units Require= this, so they wait.
+# Runs the three prepare steps in sequence, not in parallel: after a deallocation they
+# restore their indexes from the same managed disk, and running them concurrently only
+# divides each one's read bandwidth. The server units Require= this, so they wait.
 #
 # Each prepare is a waterfall that decides for itself - digest already current, index
 # already current, restore the wiped NVMe copy, or rebuild - so this is cheap to run on
@@ -18,7 +18,7 @@
 [Unit]
 Description = mcp-prepare
 After = local-fs.target network.target
-Before = mcp-science-server.service mcp-openalex-server.service
+Before = mcp-science-server.service mcp-openalex-server.service mcp-mit-server.service
 
 [Service]
 Type=oneshot
@@ -37,10 +37,11 @@ Environment=legopds_clienthash=
 # start timeout.
 TimeoutStartSec=0
 
-# Two ExecStart lines in a oneshot unit run one after the other, which is the sequencing
+# ExecStart lines in a oneshot unit run one after the other, which is the sequencing
 # this unit exists for.
 ExecStart=/bin/bash -lc 'source /home/mobius/mcp/env.sh && bash tools/sciencemcp-a100.sh prepare'
 ExecStart=/bin/bash -lc 'source /home/mobius/mcp/env.sh && bash tools/openalex-a100.sh prepare'
+ExecStart=/bin/bash -lc 'source /home/mobius/mcp/env.sh && bash tools/mitmcp-a100.sh prepare'
 
 [Install]
 WantedBy=multi-user.target

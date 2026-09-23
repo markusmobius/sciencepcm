@@ -2,14 +2,14 @@
 # Prepare the A100 box: prerequisites, Python environments, CUDA runtime, build.
 #
 # The machine only. Each service pulls its own data, exports the shared reranker and
-# builds its own index in its own prepare - see sciencemcp-a100.sh and openalex-a100.sh.
+# builds its own index in its own prepare - see {sciencemcp,openalex,mitmcp}-a100.sh.
 # Idempotent: every step checks before acting, so re-running costs little.
 #
 # Counterpart to tools/sync.ps1 on nerds21. That script produces the corpus and
 # uploads it; this one provisions this machine and pulls it down. Idempotent -
 # every step checks before acting, so re-running costs little.
 #
-# Ends with a machine that can serve: both BM25 indexes built, models exported.
+# Ends with a machine that can serve: every BM25 index built, models exported.
 # The dense/embedding pipeline is NOT part of this - the served path is BM25 plus
 # cross-encoder reranking, and the vectors stay archived in the blob store.
 #
@@ -38,7 +38,7 @@ while [[ $# -gt 0 ]]; do
         # Data, models and indexes moved into each service's prepare. --skip-build went
         # with --no-build: dotnet run rebuilds anyway, so skipping here only hides errors.
         --skip-pull|--force-pull|--skip-models|--skip-index|--force-index|--with-medcpt|--skip-build)
-                       echo "$1 is gone; see tools/{sciencemcp,openalex}-a100.sh prepare" >&2 ;;
+                       echo "$1 is gone; see tools/{sciencemcp,openalex,mitmcp}-a100.sh prepare" >&2 ;;
         -h|--help)     sed -n '2,22p' "${BASH_SOURCE[0]}"; exit 0 ;;
         *)             echo "Unknown argument: $1" >&2; exit 1 ;;
     esac
@@ -225,7 +225,7 @@ step "Services"
 
 SYSTEMD_DIR=/etc/systemd/system
 # mcp-console.service is missing on purpose: it runs on the relay, not on this box.
-UNITS=(mcp-prepare.service mcp-science-server.service mcp-openalex-server.service mcp-tunnel.service)
+UNITS=(mcp-prepare.service mcp-science-server.service mcp-openalex-server.service mcp-mit-server.service mcp-tunnel.service)
 RUN_USER="$(id -un)"
 
 SECRET=""
@@ -301,7 +301,7 @@ else
         reply=y                       # refresh in place, tokens carried over
         info "already installed; refreshing from the repo"
     elif [[ -t 0 ]]; then
-        read -rp "  Install the four units into $SYSTEMD_DIR (needs sudo)? [y/N] " reply < /dev/tty
+        read -rp "  Install the ${#UNITS[@]} units into $SYSTEMD_DIR (needs sudo)? [y/N] " reply < /dev/tty
     else
         reply=n
         warn "not a terminal; skipping (see the summary for the manual steps)"
@@ -314,6 +314,9 @@ else
         resolve_secret mcp-openalex-server.service OPENALEX_TOKEN \
             "that server will accept unauthenticated requests"
         install_unit   mcp-openalex-server.service OPENALEX_TOKEN
+        resolve_secret mcp-mit-server.service MITMCP_TOKEN \
+            "that server will accept unauthenticated requests"
+        install_unit   mcp-mit-server.service MITMCP_TOKEN
         # systemd starts with an empty environment, so the boot-time pull cannot see
         # the hash from your login profile; it has to be carried in the unit.
         resolve_secret mcp-prepare.service legopds_clienthash \
@@ -344,10 +347,12 @@ cat <<EOF
     source $MCP_ROOT/env.sh
     bash tools/sciencemcp-a100.sh prepare
     bash tools/openalex-a100.sh prepare
+    bash tools/mitmcp-a100.sh prepare
 
   Then run them:
     bash tools/sciencemcp-a100.sh serve
     bash tools/openalex-a100.sh serve
+    bash tools/mitmcp-a100.sh serve
 
   Expose them (relay holds the public TLS endpoint):
     ./tools/mcp-tunnel.sh
@@ -357,8 +362,8 @@ if [[ $SERVICES_INSTALLED -eq 1 ]]; then
 cat <<EOF
 
   The units are installed and enabled. Starting a server pulls in mcp-prepare, which
-  runs both prepares in sequence first - hours on a wiped /datadisk:
-    sudo systemctl start mcp-science-server mcp-openalex-server mcp-tunnel
+  runs all three prepares in sequence first - hours on a wiped /datadisk:
+    sudo systemctl start mcp-science-server mcp-openalex-server mcp-mit-server mcp-tunnel
     journalctl -u mcp-prepare -f
 
   Change a token later with:
@@ -368,7 +373,7 @@ else
 cat <<EOF
 
   Or install them as services (not mcp-console.service - that one runs on the relay):
-    sudo cp deploy/systemd/mcp-{prepare,science-server,openalex-server,tunnel}.service \\
+    sudo cp deploy/systemd/mcp-{prepare,science-server,openalex-server,mit-server,tunnel}.service \\
             $SYSTEMD_DIR/
 
   Copied by hand they still say User=mobius, which fails with 217/USER on this box.
@@ -376,9 +381,10 @@ cat <<EOF
   are empty on purpose, and an empty token starts the server unauthenticated:
     sudoedit $SYSTEMD_DIR/mcp-science-server.service    # SCIENCEPCM_TOKEN=
     sudoedit $SYSTEMD_DIR/mcp-openalex-server.service   # OPENALEX_TOKEN=
+    sudoedit $SYSTEMD_DIR/mcp-mit-server.service        # MITMCP_TOKEN=
     sudoedit $SYSTEMD_DIR/mcp-prepare.service           # legopds_clienthash=
 
     sudo systemctl daemon-reload
-    sudo systemctl enable --now mcp-prepare mcp-science-server mcp-openalex-server mcp-tunnel
+    sudo systemctl enable --now mcp-prepare mcp-science-server mcp-openalex-server mcp-mit-server mcp-tunnel
 EOF
 fi

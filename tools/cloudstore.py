@@ -5,7 +5,8 @@
 Three levels, used for different things:
 
   sync                  Uploads the fixed set of directories nerds21 owns, skipping
-                        anything the cloud already has. Driven by MANIFEST below.
+                        anything the cloud already has. Driven by MANIFESTS below;
+                        pick one with --corpus.
 
   push-dir / pull-dir   Plain recursive directory transfer, for anything not in the
                         manifest.
@@ -70,6 +71,26 @@ MANIFEST = [
         optional=True,
     ),
 ]
+
+MIT_MANIFEST = [
+    Entry(
+        TEMP / "mitp-abstracts",
+        "mitmcp/abstracts",
+        "Every MIT Press article with an abstract, including the half with no full text",
+    ),
+    Entry(
+        TEMP / "mitp-passages",
+        "mitmcp/passages",
+        "REGENERABLE ONLY ON NERDS21 - needs the 1.1 GB of MIT Press JATS XML",
+    ),
+]
+
+# Selected with `sync --corpus`. Each corpus owns a disjoint cloud prefix, so the two
+# services can be re-synced independently without one touching the other's data.
+MANIFESTS = {
+    "sciencepcm": MANIFEST,
+    "mitp": MIT_MANIFEST,
+}
 
 
 # ----------------------------------------------------------------- plumbing
@@ -201,7 +222,7 @@ def build_stages(report_paths: list[Path], code_version: str):
 
 
 def cmd_sync(args) -> int:
-    entries = [e for e in MANIFEST if args.include_optional or not e.optional]
+    entries = [e for e in MANIFESTS[args.corpus] if args.include_optional or not e.optional]
     if args.only:
         entries = [e for e in entries if e.cloud in args.only]
 
@@ -401,6 +422,12 @@ def main() -> int:
     )
     sync.add_argument("--include-optional", action="store_true")
     sync.add_argument("--only", action="append", help="Sync only these cloud paths. Repeatable.")
+    sync.add_argument(
+        "--corpus",
+        choices=sorted(MANIFESTS),
+        default="sciencepcm",
+        help="Which manifest to sync. Default: sciencepcm.",
+    )
     sync.set_defaults(func=cmd_sync)
 
     push_dir = sub.add_parser("push-dir", help="Recursive directory upload.")

@@ -41,6 +41,7 @@ internal static class Program
         }
 
         Directory.CreateDirectory(options.OutputDirectory);
+        if (options.AbstractsDirectory is not null) Directory.CreateDirectory(options.AbstractsDirectory);
 
         var stopwatch = Stopwatch.StartNew();
         var stats = new IngestStats();
@@ -82,7 +83,11 @@ internal static class Program
                         return;
                     }
 
-                    if (!parsed.Article.HasBody)
+                    // Without an abstracts tier a body-less article is unreachable, so it is
+                    // dropped as before; with one it is still retrievable by its abstract.
+                    var keepForAbstract = options.AbstractsDirectory is not null
+                                          && !string.IsNullOrWhiteSpace(parsed.Article.Abstract);
+                    if (!parsed.Article.HasBody && !keepForAbstract)
                     {
                         Interlocked.Increment(ref stats.SkippedNoBody);
                         return;
@@ -94,7 +99,12 @@ internal static class Program
                         return;
                     }
 
-                    var chunks = Chunker.Chunk(parsed, chunkOptions);
+                    if (!parsed.Article.HasBody)
+                    {
+                        Interlocked.Increment(ref stats.AbstractOnly);
+                    }
+
+                    var chunks = parsed.Article.HasBody ? Chunker.Chunk(parsed, chunkOptions) : [];
                     await channel.Writer.WriteAsync(new ParsedResult(parsed.Article, chunks), token);
                 }
                 catch (Exception ex)
@@ -125,6 +135,10 @@ internal static class Program
         Console.WriteLine();
         Console.WriteLine($"Articles written : {stats.Articles:N0}");
         Console.WriteLine($"Chunks written   : {stats.Chunks:N0}");
+        if (options.AbstractsDirectory is not null)
+        {
+            Console.WriteLine($"Abstracts written: {stats.Abstracts:N0} ({stats.AbstractOnly:N0} with no body)");
+        }
         Console.WriteLine($"Skipped (range)  : {stats.SkippedOutOfRange:N0}");
         Console.WriteLine($"Skipped (no body): {stats.SkippedNoBody:N0}");
         Console.WriteLine($"Skipped (dup key): {stats.SkippedDuplicate:N0}");
@@ -206,12 +220,18 @@ internal static class Program
     {
         var articles = new List<ArticleRow>(options.ShardSize);
         var chunks = new List<ChunkRow>(options.ShardSize * 16);
+        var abstracts = new List<OpenAlexShapedAbstract>(options.ShardSize);
         var shard = 0;
 
         await foreach (var result in reader.ReadAllAsync())
         {
             articles.Add(result.Article);
             chunks.AddRange(result.Chunks);
+
+            if (options.AbstractsDirectory is not null && !string.IsNullOrWhiteSpace(result.Article.Abstract))
+            {
+                abstracts.Add(OpenAlexShapedAbstract.From(result.Article));
+            }
 
             foreach (var chunk in result.Chunks)
             {
@@ -223,13 +243,13 @@ internal static class Program
 
             if (articles.Count >= options.ShardSize)
             {
-                await FlushAsync(options, shard++, articles, chunks, stats);
+                await FlushAsync(options, shard++, articles, chunks, abstracts, stats);
             }
         }
 
         if (articles.Count > 0)
         {
-            await FlushAsync(options, shard, articles, chunks, stats);
+            await FlushAsync(options, shard, articles, chunks, abstracts, stats);
         }
     }
 
@@ -238,6 +258,7 @@ internal static class Program
         int shard,
         List<ArticleRow> articles,
         List<ChunkRow> chunks,
+        List<OpenAlexShapedAbstract> abstracts,
         IngestStats stats)
     {
         var serializerOptions = new ParquetOptions
@@ -259,12 +280,21 @@ internal static class Program
             await ParquetSerializer.SerializeAsync(chunks, stream, serializerOptions);
         }
 
+        if (options.AbstractsDirectory is not null)
+        {
+            var abstractPath = Path.Combine(options.AbstractsDirectory, $"abstracts-part-{shard:D4}.parquet");
+            await using var stream = File.Create(abstractPath);
+            await ParquetSerializer.SerializeAsync(abstracts, stream, serializerOptions);
+            stats.Abstracts += abstracts.Count;
+        }
+
         stats.Articles += articles.Count;
         stats.Chunks += chunks.Count;
-        Console.WriteLine($"  wrote shard {shard:D4}: {articles.Count:N0} articles, {chunks.Count:N0} chunks");
+        Console.WriteLine($"  wrote shard {shard:D4}: {articles.Count:N0} articles, {chunks.Count:N0} chunks, {abstracts.Count:N0} abstracts");
 
         articles.Clear();
         chunks.Clear();
+        abstracts.Clear();
     }
 
     private static async Task WriteReportAsync(Options options, int discovered, IngestStats stats, TimeSpan elapsed)
@@ -287,6 +317,8 @@ internal static class Program
                 files_discovered = discovered,
                 articles_written = stats.Articles,
                 chunks_written = stats.Chunks,
+                abstracts_written = stats.Abstracts,
+                abstract_only_articles = stats.AbstractOnly,
                 skipped_out_of_range = stats.SkippedOutOfRange,
                 skipped_no_body = stats.SkippedNoBody,
                 skipped_not_article = stats.SkippedNotArticle,
@@ -324,6 +356,8 @@ internal sealed class IngestStats
 {
     public long Articles;
     public long Chunks;
+    public long Abstracts;
+    public int AbstractOnly;
     public int SkippedOutOfRange;
     public int SkippedNoBody;
     public int SkippedNotArticle;
@@ -346,6 +380,8 @@ internal sealed class Options
         Options:
           --input <corpus>=<dir>   Corpus label and full-text root. Repeatable.
           --out <dir>              Output directory for Parquet shards.
+          --abstracts-out <dir>    Also write an abstracts tier in the OpenAlex column shape.
+                                   Keeps articles that have an abstract but no body.
           --year-min <n>           Drop articles published before this year.
           --year-max <n>           Drop articles published after this year.
           --limit <n>              Process at most n files (smoke tests).
@@ -358,6 +394,7 @@ internal sealed class Options
 
     public List<CorpusInput> Inputs { get; } = [];
     public string OutputDirectory { get; private set; } = "";
+    public string? AbstractsDirectory { get; private set; }
     public int? YearMin { get; private set; }
     public int? YearMax { get; private set; }
     public int? Limit { get; private set; }
@@ -393,6 +430,7 @@ internal sealed class Options
                     break;
 
                 case "--out": options.OutputDirectory = Next(); break;
+                case "--abstracts-out": options.AbstractsDirectory = Next(); break;
                 case "--year-min": options.YearMin = int.Parse(Next()); break;
                 case "--year-max": options.YearMax = int.Parse(Next()); break;
                 case "--limit": options.Limit = int.Parse(Next()); break;

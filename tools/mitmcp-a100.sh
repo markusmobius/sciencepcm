@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
-# Run the neuroscience MCP service on the provisioned A100 box.
+# Run the MIT Press MCP service on the provisioned A100 box.
 #
-# Preparation (corpus, models, indexes) lives in gcr-prep.sh; this owns the paths and the
-# serving arguments, so the systemd unit and the README no longer keep separate copies of
+# The third service, and structurally the same as sciencemcp-a100.sh: same server
+# binary, same reranker, same two-tier index. Only the corpus and the ports differ.
+#
+# Preparation of the machine itself lives in gcr-prep.sh; this owns the paths and the
+# serving arguments, so the systemd unit and the docs no longer keep separate copies of
 # them that drift apart.
 set -euo pipefail
 
@@ -11,18 +14,17 @@ MCP_ROOT="${MCP_ROOT:-$HOME/mcp}"
 FAST_ROOT="${MCP_FAST_ROOT:-/datadisk}"
 SYNC_PYTHON="$MCP_ROOT/venvs/sync/bin/python"
 LAB_PYTHON="$MCP_ROOT/venvs/lab/bin/python"
-CORPUS="$MCP_ROOT/data/sciencepcm"
-# The same bge-reranker-v2-m3 export both services use.
+CORPUS="$MCP_ROOT/data/mitmcp"
+# The same bge-reranker-v2-m3 export all three services use.
 MODEL="$MCP_ROOT/models/bge-reranker"
-PORT="${SCIENCEPCM_PORT:-8080}"
+PORT="${MITMCP_PORT:-8082}"
 
-# The index lives only on the NVMe. A durable copy of the OpenAlex index does not fit on
-# the OS disk, so neither service keeps one and both rebuild after a deallocation - the
-# stamp goes with the wiped disk, so prepare notices on its own.
+# The index lives only on the NVMe, as for the other two services; the stamp goes with
+# the wiped disk, so prepare notices a deallocation on its own.
 INDEX_ROOT="$FAST_ROOT/index"
 
-ABSTRACTS_INDEX="$INDEX_ROOT/science-abstracts"
-PASSAGE_INDEX="$INDEX_ROOT/science-passages"
+ABSTRACTS_INDEX="$INDEX_ROOT/mit-abstracts"
+PASSAGE_INDEX="$INDEX_ROOT/mit-passages"
 COMMAND="${1:-serve}"
 
 size_of() {
@@ -38,16 +40,14 @@ index_current() {
         >/dev/null 2>&1 )
 }
 
-# Restoring and rebuilding collapse into one question - is the index at this path
-# current - now that there is only one path.
 prepare() {
     check
     mkdir -p "$MCP_ROOT/data" "$MCP_ROOT/models" "$INDEX_ROOT"
 
-    for name in abstracts passages-2019-2025 questions; do
-        echo "pulling sciencepcm/$name (transfers only what differs)"
+    for name in abstracts passages; do
+        echo "pulling mitmcp/$name (transfers only what differs)"
         "$SYNC_PYTHON" "$REPO/tools/cloudstore.py" pull-dir \
-            --cloud "sciencepcm/$name" --local "$MCP_ROOT/data"
+            --cloud "mitmcp/$name" --local "$MCP_ROOT/data"
     done
 
     if [[ ! -f "$MODEL/model.onnx" || ! -f "$MODEL/tokenizer.onnx" ]]; then
@@ -64,9 +64,11 @@ prepare() {
         echo "reranker already present"
     fi
 
+    # The abstracts tier is projected from JATS by SciencePcm.Ingest into the OpenAlex
+    # column shape, so it reads with the same --schema abstracts as the neuroscience one.
     local pairs=(
-        "science-abstracts|abstracts|$CORPUS/abstracts/*.parquet|"
-        "science-passages|chunks|$CORPUS/passages-2019-2025/chunks-part-*.parquet|$CORPUS/passages-2019-2025/articles-part-*.parquet"
+        "mit-abstracts|abstracts|$CORPUS/abstracts/abstracts-part-*.parquet|"
+        "mit-passages|chunks|$CORPUS/passages/chunks-part-*.parquet|$CORPUS/passages/articles-part-*.parquet"
     )
 
     for pair in "${pairs[@]}"; do
@@ -97,7 +99,7 @@ stamp_of() {
 }
 
 check() {
-    echo "service        : ScienceMCP"
+    echo "service        : MITMCP"
     echo "host           : $(hostname)"
     echo "abstracts index: $ABSTRACTS_INDEX [$(size_of "$ABSTRACTS_INDEX")] $(stamp_of "$ABSTRACTS_INDEX")"
     echo "passage index  : $PASSAGE_INDEX [$(size_of "$PASSAGE_INDEX")] $(stamp_of "$PASSAGE_INDEX")"
@@ -117,11 +119,16 @@ serve() {
     check
 
     # Asserted here rather than in check, which prepare calls before it has built either.
-    [[ -d "$ABSTRACTS_INDEX" ]] || { echo "no abstracts index; run: bash tools/sciencemcp-a100.sh prepare" >&2; exit 1; }
-    [[ -f "$MODEL/model.onnx" ]] || { echo "no reranker; run: bash tools/sciencemcp-a100.sh prepare" >&2; exit 1; }
+    [[ -d "$ABSTRACTS_INDEX" ]] || { echo "no abstracts index; run: bash tools/mitmcp-a100.sh prepare" >&2; exit 1; }
+    [[ -f "$MODEL/model.onnx" ]] || { echo "no reranker; run: bash tools/mitmcp-a100.sh prepare" >&2; exit 1; }
 
     local passage_args=()
     [[ -d "$PASSAGE_INDEX" ]] && passage_args=(--passage-index "$PASSAGE_INDEX")
+
+    # The server binary reads SCIENCEPCM_TOKEN; this service carries its own name so the
+    # two cannot be mixed up when both are set. Assigned rather than passed as --token,
+    # which would put the secret in ps output.
+    export SCIENCEPCM_TOKEN="${MITMCP_TOKEN:-}"
 
     exec dotnet run --project "$REPO/src/SciencePcm.Server" -c Release \
         -p:UseGpu=true -- \
