@@ -102,6 +102,15 @@ public static class LexicalIndex
     /// <summary>Stemming and stopword removal matter more than exact term matching here.</summary>
     public static Analyzer CreateAnalyzer() => new EnglishAnalyzer(Version);
 
+    public static Filter CreateKeyFilter(IReadOnlyCollection<string> keys)
+    {
+        if (keys.Count == 0)
+            throw new ArgumentException("An article filter must contain at least one key.", nameof(keys));
+
+        return new CachingWrapperFilter(new TermsFilter(
+            keys.Select(key => new Term(KeyField, key)).ToArray()));
+    }
+
     public static Document CreateDocument(ArticleDocument source)
     {
         var document = new Document
@@ -358,6 +367,13 @@ public sealed class LexicalSearcher : IDisposable
 
     public int Count => _reader.NumDocs;
 
+    public int CountMatching(Filter filter)
+    {
+        var collector = new TotalHitCountCollector();
+        _searcher.Search(new MatchAllDocsQuery(), filter, collector);
+        return collector.TotalHits;
+    }
+
     /// <summary>
     /// Distinct article keys, which for the passage index is how many papers have full
     /// text - not the same as the passage count, since one paper yields many passages.
@@ -382,7 +398,8 @@ public sealed class LexicalSearcher : IDisposable
         IReadOnlyCollection<string>? excludeWorkTypes = null,
         string? author = null,
         string? journal = null,
-        SortOrder sort = SortOrder.Relevance)
+        SortOrder sort = SortOrder.Relevance,
+        Filter? corpusFilter = null)
     {
         var parsed = BuildFieldedQuery(query);
 
@@ -452,13 +469,13 @@ public sealed class LexicalSearcher : IDisposable
         // score ordering; without it Lucene leaves them NaN.
         var top = sort switch
         {
-            SortOrder.Citations => _searcher.Search(effective, null, k,
+            SortOrder.Citations => _searcher.Search(effective, corpusFilter, k,
                 new Sort(new SortField(LexicalIndex.CitedByCountField, SortFieldType.INT32, true)),
                 true, false),
-            SortOrder.Year => _searcher.Search(effective, null, k,
+            SortOrder.Year => _searcher.Search(effective, corpusFilter, k,
                 new Sort(new SortField(LexicalIndex.YearField, SortFieldType.INT32, true)),
                 true, false),
-            _ => _searcher.Search(effective, k),
+            _ => _searcher.Search(effective, corpusFilter, k),
         };
 
         var hits = new List<LexicalHit>(top.ScoreDocs.Length);
@@ -610,11 +627,12 @@ public sealed class LexicalSearcher : IDisposable
         IReadOnlyCollection<string>? excludeWorkTypes = null,
         string? author = null,
         string? journal = null,
-        SortOrder sort = SortOrder.Relevance)
+        SortOrder sort = SortOrder.Relevance,
+        Filter? corpusFilter = null)
     {
         var passages = Search(
             query, k * _fetchMultiplier, yearMin, yearMax, excludeWorkTypes: excludeWorkTypes,
-            author: author, journal: journal, sort: sort);
+            author: author, journal: journal, sort: sort, corpusFilter: corpusFilter);
         var best = new Dictionary<string, LexicalHit>(passages.Count);
 
         foreach (var hit in passages)
@@ -629,9 +647,9 @@ public sealed class LexicalSearcher : IDisposable
     }
 
     /// <summary>Exact lookup by article key, for get_paper.</summary>
-    public LexicalHit? GetByKey(string key)
+    public LexicalHit? GetByKey(string key, Filter? corpusFilter = null)
     {
-        var top = _searcher.Search(new TermQuery(new Term(LexicalIndex.KeyField, key)), 1);
+        var top = _searcher.Search(new TermQuery(new Term(LexicalIndex.KeyField, key)), corpusFilter, 1);
         return top.ScoreDocs.Length == 0 ? null : ToHit(_searcher.Doc(top.ScoreDocs[0].Doc), 0f);
     }
 

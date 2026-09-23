@@ -10,4 +10,7 @@
     <Project Path="src/SciencePcm.Inspector/SciencePcm.Inspector.csproj" />
     <Project Path="src/SciencePcm.Server/SciencePcm.Server.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/OpenAlex.Server.Tests/OpenAlex.Server.Tests.csproj" />
+  </Folder>
 </Solution>

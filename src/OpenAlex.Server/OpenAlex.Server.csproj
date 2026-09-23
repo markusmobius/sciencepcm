@@ -10,4 +10,11 @@
     <ProjectReference Include="..\SciencePcm.Server\SciencePcm.Server.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Content Include="../../custom_mcps/**/*"
+             Link="custom_mcps/%(RecursiveDir)%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

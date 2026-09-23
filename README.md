@@ -13,6 +13,11 @@ cross-encoder rerank, served from one A100 box.
 
 A browser console for poking at either lives at `www.mcptest.econlabs.org`.
 
+OpenAlex also serves ID-restricted corpora from the same process and port, configured
+in [custom_mcps/config.json](custom_mcps/config.json). The included MIT subset is at
+`/mcp/openalexmit`; the full corpus stays at `/mcp`. See
+[custom corpus endpoints](doc/openalex.md#custom-corpus-endpoints) for configuration.
+
 ## Documentation
 
 - **[doc/provisioning.md](doc/provisioning.md)** — getting a GPU box ready: the right

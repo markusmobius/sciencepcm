@@ -1,3 +1,4 @@
+using Lucene.Net.Search;
 using Microsoft.ML.OnnxRuntime;
 using SciencePcm.Embed;
 using SciencePcm.Index;
@@ -28,6 +29,7 @@ public sealed record ServerOptions
     public string? PassageIndexPath { get; init; }
     public int RerankCandidates { get; init; } = 100;
     public int RerankBatch { get; init; } = 32;
+    public int MaxConcurrentReranks { get; init; } = int.MaxValue;
     public int MaxTokens { get; init; } = 512;
     public int Threads { get; init; } = 8;
     public bool ParallelSearch { get; init; } = true;
@@ -76,11 +78,14 @@ public sealed class RetrievalService : IDisposable
     private readonly LexicalSearcher? _passages;
     private readonly InferenceSession _session;
     private readonly ThreadLocal<ICrossEncoder> _rerankers;
+    private readonly SemaphoreSlim _rerankSlots;
     private readonly ServerOptions _options;
 
     public RetrievalService(ServerOptions options)
     {
+        ArgumentOutOfRangeException.ThrowIfLessThan(options.MaxConcurrentReranks, 1);
         _options = options;
+        _rerankSlots = new SemaphoreSlim(options.MaxConcurrentReranks, options.MaxConcurrentReranks);
         _lexical = new LexicalSearcher(
             options.IndexPath, 4, options.ParallelSearch, options.CitationPriorWeight);
         _passages = string.IsNullOrWhiteSpace(options.PassageIndexPath)
@@ -97,10 +102,13 @@ public sealed class RetrievalService : IDisposable
         // Run() is thread-safe so the session is shared, but each tokenizer is not.
         _rerankers = new ThreadLocal<ICrossEncoder>(() => CrossEncoderFactory.Create(
             new CrossEncoderOptions(options.CrossEncoderPath, options.Threads, options.MaxTokens),
-            _session));
+            _session), trackAllValues: true);
     }
 
     public int DocumentCount => _lexical.Count;
+
+    public int CountDocuments(Filter? corpusFilter) =>
+        corpusFilter is null ? _lexical.Count : _lexical.CountMatching(corpusFilter);
 
     public int PassageCount => _passages?.Count ?? 0;
 
@@ -117,7 +125,8 @@ public sealed class RetrievalService : IDisposable
         bool rerank = true,
         string? author = null,
         string? journal = null,
-        SortOrder sort = SortOrder.Relevance)
+        SortOrder sort = SortOrder.Relevance,
+        Filter? corpusFilter = null)
     {
         var candidates = _lexical.SearchArticles(
             query,
@@ -127,7 +136,8 @@ public sealed class RetrievalService : IDisposable
             _options.ExcludeWorkTypes,
             author,
             journal,
-            sort);
+            sort,
+            corpusFilter);
 
         if (candidates.Count == 0) return [];
 
@@ -160,9 +170,9 @@ public sealed class RetrievalService : IDisposable
         return citations <= 0 ? 0 : _options.CitationPriorWeight * Math.Log10(1 + citations);
     }
 
-    public SearchResult? GetPaper(string articleKey)
+    public SearchResult? GetPaper(string articleKey, Filter? corpusFilter = null)
     {
-        var hit = _lexical.GetByKey(articleKey);
+        var hit = _lexical.GetByKey(articleKey, corpusFilter);
         return hit is null ? null : ToResult(hit, 0f, "lookup");
     }
 
@@ -227,19 +237,27 @@ public sealed class RetrievalService : IDisposable
 
     private float[] Rerank(string query, IReadOnlyList<LexicalHit> candidates)
     {
-        var encoder = _rerankers.Value!;
-        var scores = new float[candidates.Count];
-
-        for (var start = 0; start < candidates.Count; start += _options.RerankBatch)
+        _rerankSlots.Wait();
+        try
         {
-            var slice = candidates.Skip(start).Take(_options.RerankBatch).ToList();
-            var passages = slice.Select(RerankText).ToList();
+            var encoder = _rerankers.Value!;
+            var scores = new float[candidates.Count];
 
-            var batchScores = encoder.Score(query, passages);
-            Array.Copy(batchScores, 0, scores, start, batchScores.Length);
+            for (var start = 0; start < candidates.Count; start += _options.RerankBatch)
+            {
+                var slice = candidates.Skip(start).Take(_options.RerankBatch).ToList();
+                var passages = slice.Select(RerankText).ToList();
+
+                var batchScores = encoder.Score(query, passages);
+                Array.Copy(batchScores, 0, scores, start, batchScores.Length);
+            }
+
+            return scores;
         }
-
-        return scores;
+        finally
+        {
+            _rerankSlots.Release();
+        }
     }
 
     private static string RerankText(LexicalHit hit)
@@ -335,6 +353,7 @@ public sealed class RetrievalService : IDisposable
     {
         foreach (var encoder in _rerankers.Values) encoder.Dispose();
         _rerankers.Dispose();
+        _rerankSlots.Dispose();
         _session.Dispose();
         _passages?.Dispose();
         _lexical.Dispose();

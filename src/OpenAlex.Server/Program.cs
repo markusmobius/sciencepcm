@@ -1,3 +1,5 @@
+using ModelContextProtocol.Server;
+using OpenAlex.Server;
 using SciencePcm.Server;
 
 var builder = WebApplication.CreateBuilder(ExpandFlags(args, "gpu"));
@@ -20,6 +22,9 @@ var index = builder.Configuration["index"]
     ?? throw new InvalidOperationException("--index <OpenAlex Lucene directory> is required.");
 var crossEncoder = builder.Configuration["cross-encoder"]
     ?? throw new InvalidOperationException("--cross-encoder <ONNX directory> is required.");
+var corporaConfig = builder.Configuration["corpora-config"]
+    ?? Path.Combine(AppContext.BaseDirectory, "custom_mcps", "config.json");
+var corpora = OpenAlexCorpus.Load(corporaConfig);
 
 var options = new ServerOptions
 {
@@ -27,6 +32,7 @@ var options = new ServerOptions
     CrossEncoderPath = crossEncoder,
     RerankCandidates = builder.Configuration.GetValue("rerank-candidates", 100),
     RerankBatch = builder.Configuration.GetValue("rerank-batch", 32),
+    MaxConcurrentReranks = builder.Configuration.GetValue("rerank-concurrency", 1),
     Threads = builder.Configuration.GetValue("threads", 8),
     ParallelSearch = builder.Configuration.GetValue("parallel-search", true),
     ExcludeWorkTypes = (builder.Configuration["exclude-types"] ?? "peer-review,dataset,paratext")
@@ -50,7 +56,7 @@ builder.Services.AddCors(cors => cors.AddDefaultPolicy(policy => policy
     .WithExposedHeaders("Mcp-Session-Id")));
 builder.Services.AddSingleton(options);
 builder.Services.AddSingleton<RetrievalService>();
-builder.Services.AddMcpServer().WithHttpTransport().WithToolsFromAssembly();
+builder.Services.AddMcpServer().WithHttpTransport(OpenAlexEndpoint.ConfigureTransport);
 
 var app = builder.Build();
 app.UseCors();
@@ -81,16 +87,41 @@ app.MapGet("/health", (RetrievalService retrieval) => Results.Ok(new
     status = "ok",
     abstracts = retrieval.DocumentCount,
 }));
-app.MapMcp("/mcp");
 
 var warmup = app.Services.GetRequiredService<RetrievalService>();
 Console.WriteLine("service        : OpenAlex MCP");
 Console.WriteLine($"abstract index : {options.IndexPath} ({warmup.DocumentCount:N0} documents)");
 Console.WriteLine($"cross-encoder  : {options.CrossEncoderPath} (gpu={options.UseGpu})");
 Console.WriteLine($"rerank depth   : {options.RerankCandidates}");
+Console.WriteLine($"rerank slots   : {options.MaxConcurrentReranks}");
 Console.WriteLine($"excluded types : {(options.ExcludeWorkTypes.Count == 0 ? "none" : string.Join(", ", options.ExcludeWorkTypes))}");
 Console.WriteLine($"citation prior : {options.CitationPriorWeight:0.##} (BM25 x up to {1 + options.CitationPriorWeight:0.##})");
 Console.WriteLine($"auth           : {(string.IsNullOrEmpty(token) ? "OPEN - no OPENALEX_TOKEN set" : "bearer token required")}");
-Console.WriteLine("mcp endpoint   : /mcp");
+Console.WriteLine($"corpora config : {Path.GetFullPath(corporaConfig)}");
+
+foreach (var corpus in corpora)
+{
+    var tools = new OpenAlexTools(warmup, corpus);
+    new OpenAlexEndpoint(corpus,
+    [
+        McpServerTool.Create(tools.SearchOpenAlex),
+        McpServerTool.Create(tools.GetOpenAlexWork),
+        McpServerTool.Create(tools.CorpusStats),
+    ]).Map(app);
+
+    if (corpus.Filter is not null)
+    {
+        app.MapGet($"/health/{corpus.Name}", () => Results.Ok(new
+        {
+            service = corpus.Name,
+            status = "ok",
+            abstracts = tools.DocumentCount,
+            requested_ids = corpus.RequestedIds,
+        }));
+    }
+
+    Console.WriteLine($"mcp endpoint   : {corpus.McpPath} ({tools.DocumentCount:N0} documents"
+        + (corpus.RequestedIds is { } requested ? $", {requested:N0} requested IDs)" : ")"));
+}
 
 app.Run();

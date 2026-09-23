@@ -7,13 +7,15 @@ using SciencePcm.Server;
 namespace OpenAlex.Server;
 
 [McpServerToolType]
-public sealed class OpenAlexTools(RetrievalService retrieval)
+public sealed class OpenAlexTools(RetrievalService retrieval, OpenAlexCorpus corpus)
 {
     private static readonly JsonSerializerOptions Json = new() { WriteIndented = true };
 
+    public int DocumentCount { get; } = retrieval.CountDocuments(corpus.Filter);
+
     [McpServerTool(Name = "search_openalex")]
     [Description(
-        "Find papers across the unfiltered OpenAlex works snapshot. The query may be a research " +
+        "Find papers within this endpoint's OpenAlex corpus. The query may be a research " +
         "question, a claim or passage from a newspaper article, or remembered bibliographic clues. " +
         "Title, abstract, authors, institutions, journal, identifiers and topics are separate " +
         "indexed fields, matched together and weighted, before a cross-encoder reranks candidates. " +
@@ -54,7 +56,7 @@ public sealed class OpenAlexTools(RetrievalService retrieval)
         {
             results = retrieval.Search(
                 query, Math.Clamp(limit, 1, 50), yearMin, yearMax, rerank: !fast,
-                author: author, journal: journal, sort: order);
+                author: author, journal: journal, sort: order, corpusFilter: corpus.Filter);
         }
         catch (ArgumentException ex)
         {
@@ -100,7 +102,8 @@ public sealed class OpenAlexTools(RetrievalService retrieval)
     public string GetOpenAlexWork(
         [Description("The OpenAlex ID, for example https://openalex.org/W2154021234.")] string openAlexId)
     {
-        var work = retrieval.GetPaper(openAlexId);
+        var key = OpenAlexCorpus.NormalizeId(openAlexId);
+        var work = key is null ? null : retrieval.GetPaper(key, corpus.Filter);
         if (work is null)
         {
             return JsonSerializer.Serialize(new { error = "not found", openalex_id = openAlexId }, Json);
@@ -136,14 +139,19 @@ public sealed class OpenAlexTools(RetrievalService retrieval)
     [Description("Describe the OpenAlex corpus and retrieval limitations before interpreting absent results.")]
     public string CorpusStats() => JsonSerializer.Serialize(new
     {
-        service = "OpenAlex abstracts",
-        documents = retrieval.DocumentCount,
-        source = "Complete local OpenAlex works snapshot, without a field or topic filter",
-        inclusion = "Works with a nonempty abstract_inverted_index",
+        service = corpus.Filter is null ? "OpenAlex abstracts" : $"OpenAlex subset: {corpus.Name}",
+        corpus = corpus.Name,
+        documents = DocumentCount,
+        requested_ids = corpus.RequestedIds,
+        source = corpus.Filter is null
+            ? "Complete local OpenAlex works snapshot, without a field or topic filter"
+            : "Local OpenAlex works restricted to this endpoint's configured ID allowlist",
+        inclusion = "Works with a nonempty title or abstract in the local snapshot",
         retrieval = "Lucene BM25 candidate retrieval followed by cross-encoder reranking",
         caveats = new[]
         {
-            "OpenAlex does not provide an abstract for every work; missing works are not searchable here.",
+            "Some works have title and metadata only; OpenAlex does not provide an abstract for every work.",
+            "Works absent from the local snapshot cannot be retrieved.",
             "Lexical candidate retrieval can miss papers that use different terminology.",
             "English analysis and reranking are weaker for non-English abstracts.",
             "OpenAlex can contain duplicate records or multiple versions of substantially the same work.",

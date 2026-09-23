@@ -46,6 +46,84 @@ Two defaults are specific to this service:
 Reranking is skipped for a non-relevance sort: a browse has no relevance signal to rerank
 on, and reordering would defeat the sort that was asked for.
 
+## Custom corpus endpoints
+
+One OpenAlex process can serve the full corpus and multiple ID-restricted corpora at
+the same time. Configure the subsets in
+[custom_mcps/config.json](../custom_mcps/config.json):
+
+```json
+{
+   "customCorpora": [
+      {
+         "name": "openalexmit",
+         "idsFile": "openalexmit.txt"
+      }
+   ]
+}
+```
+
+The full endpoint is always present. Each name determines a subpath; there is no
+per-corpus port. With the standard `serve` command:
+
+| Corpus | Local MCP URL | Health URL |
+| --- | --- | --- |
+| Full OpenAlex | `http://localhost:8081/mcp` | `http://localhost:8081/health` |
+| MIT allowlist | `http://localhost:8081/mcp/openalexmit` | `http://localhost:8081/health/openalexmit` |
+
+Register each desired URL as a separate MCP server in the client. All expose the same
+three tools and arguments. The public MIT URL is
+`https://www.openalexmcp.econlabs.org/mcp/openalexmit`; the existing nginx prefix
+mapping and reverse tunnel already forward it, without another port or vhost.
+
+`idsFile` is resolved relative to the config file's directory, not the working
+directory. Use one OpenAlex work ID per line, either `W2980405032` or
+`https://openalex.org/W2980405032`. Blank lines are ignored and duplicate IDs are
+collapsed. Names must start with a lowercase letter or digit and otherwise contain
+only lowercase letters, digits, `_` or `-`; `openalex` is reserved for the full corpus.
+Missing files, empty ID lists, malformed IDs, duplicate names and unknown JSON
+properties fail startup. An empty `customCorpora` array serves only the full corpus.
+
+The config and ID files are copied into build and publish output. By default the
+server reads `custom_mcps/config.json` beside its executable. To use an external
+configuration with the existing serve script:
+
+```bash
+bash tools/openalex-a100.sh serve --corpora-config /absolute/path/to/config.json
+```
+
+Configuration and ID lists are loaded once at startup. After editing the repository
+copies, restart the normal `serve` command (or the existing systemd service); it
+builds and copies the updated files. For a published deployment, update the deployed
+files or supply `--corpora-config`, then restart. No index rebuild is needed.
+
+All endpoints share one Lucene reader and one ONNX model session. Each subset has its
+own cached, non-scoring exact-ID filter, applied inside Lucene before selecting the
+top candidates, including author/journal browsing and citation/year sorts. Reranking
+and deduplication therefore operate only on allowed works. Direct work lookups use
+the same restriction, and unknown endpoint names return 404 rather than falling back
+to the full corpus. BM25 statistics remain those of the shared full index.
+
+Subset health and `openalex_corpus_stats` report the number of matching indexed
+documents and `requested_ids`, the number of distinct IDs in the file. Allowlisting
+an ID does not download it or make it available if absent from the local snapshot.
+The normal search filters, including excluded work types, still apply.
+
+OpenAlex allows one rerank request at a time across all endpoints by default; change
+this with `--rerank-concurrency N` after checking GPU memory headroom. Lexical searches
+can still run concurrently. The transport remains stateless Streamable HTTP, with
+the corpus bound to the matched endpoint on every request.
+
+All endpoints use the existing `OPENALEX_TOKEN` and CORS policy. A subset URL is a
+corpus restriction, not a separate authorization policy: anyone holding that token
+can also access the full endpoint.
+
+Run the focused retrieval, configuration and HTTP-routing tests with:
+
+```bash
+dotnet test tests/OpenAlex.Server.Tests/OpenAlex.Server.Tests.csproj
+```
+
 ## Why landmark papers were missing
 
 Worth reading before touching ranking: four papers known to be in OpenAlex were absent

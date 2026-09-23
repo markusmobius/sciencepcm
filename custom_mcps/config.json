@@ -1,0 +1,8 @@
+{
+  "customCorpora": [
+    {
+      "name": "openalexmit",
+      "idsFile": "openalexmit.txt"
+    }
+  ]
+}
