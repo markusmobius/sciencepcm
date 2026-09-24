@@ -230,7 +230,7 @@ public static class ParquetTextSource
             throw new FileNotFoundException($"No Parquet files matched '{glob}'.");
         }
 
-        var jatsMetadata = schema == CorpusSchema.Chunks && !string.IsNullOrWhiteSpace(metadataGlob)
+        var jatsMetadata = schema is CorpusSchema.Chunks or CorpusSchema.Abstracts && !string.IsNullOrWhiteSpace(metadataGlob)
             ? await ReadJatsMetadataAsync(metadataGlob)
             : null;
 
@@ -242,37 +242,42 @@ public static class ParquetTextSource
             {
                 foreach (var row in (await ParquetSerializer.DeserializeAsync<ArticleMetaRow>(stream)).Data)
                 {
-                    if (string.IsNullOrEmpty(row.openalex_id) || string.IsNullOrWhiteSpace(row.@abstract)) continue;
+                    if (string.IsNullOrEmpty(row.openalex_id)) continue;
+                    JatsArticleMetadata? articleMetadata = null;
+                    jatsMetadata?.TryGetValue(row.openalex_id, out articleMetadata);
+                    if (string.IsNullOrWhiteSpace(row.@abstract) &&
+                        (articleMetadata is null || string.IsNullOrWhiteSpace(row.title))) continue;
                     yield return new ArticleRecord(
                         row.openalex_id,
                         row.openalex_id,
                         row.title ?? "",
-                        row.@abstract!,
+                        row.@abstract ?? "",
                         row.publication_year ?? 0,
-                        row.pmid ?? "",
+                        row.pmid ?? articleMetadata?.Pmid ?? "",
                         Section: "",
                         IsRetracted: false,
                         new BibliographicMetadata(
-                            row.publication_date ?? "",
-                            row.doi ?? "",
-                            Authors: "",
+                            row.publication_date ?? articleMetadata?.Metadata.PublicationDate ?? "",
+                            row.doi ?? articleMetadata?.Metadata.Doi ?? "",
+                            Authors: articleMetadata?.Metadata.Authors ?? "",
                             Institutions: "",
-                            row.primary_source_name ?? "",
-                            Issn: "",
+                            row.primary_source_name ?? articleMetadata?.Metadata.Journal ?? "",
+                            Issn: articleMetadata?.Metadata.Issn ?? "",
                             row.language ?? "",
-                            row.work_type ?? "",
-                            (int)Math.Clamp(row.cited_by_count ?? 0, 0, int.MaxValue),
+                            row.work_type ?? articleMetadata?.Metadata.WorkType ?? "",
+                            row.cited_by_count is { } citations ? (int)Math.Clamp(citations, 0, int.MaxValue)
+                                : articleMetadata is null ? 0 : null,
                             Volume: "",
                             Issue: "",
                             FirstPage: "",
                             LastPage: "",
                             Topics: "",
-                            Keywords: "",
-                            row.pmcid ?? "",
-                            Publisher: "",
+                            Keywords: articleMetadata?.Metadata.Keywords ?? "",
+                            row.pmcid ?? articleMetadata?.Metadata.Pmcid ?? "",
+                            Publisher: articleMetadata?.Metadata.Publisher ?? "",
                             row.best_oa_landing_page_url ?? row.primary_landing_page_url ?? "",
                             row.best_oa_pdf_url ?? row.primary_pdf_url ?? "",
-                            row.best_oa_license ?? "",
+                            row.best_oa_license ?? articleMetadata?.Metadata.License ?? "",
                             row.is_oa));
                 }
             }

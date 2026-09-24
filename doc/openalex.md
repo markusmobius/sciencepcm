@@ -235,7 +235,7 @@ It is a waterfall, and each stage decides for itself whether there is work to do
 1. **Digest** — pulled every time. The blob store fingerprints files and transfers only
    what differs, so an unchanged digest costs nothing and a rebuilt one is picked up
    automatically.
-2. **Reranker** — exported only when the ONNX files are absent. Both services share one
+2. **Reranker** — exported only when the ONNX files are absent. All four services share one
    `bge-reranker-v2-m3` export; the weights are identical.
 3. **Index** — the builder writes `index-stamp.json` beside the index recording the
    schema version and a fingerprint of the source shards. If both still match it returns
@@ -253,7 +253,7 @@ One root for everything downloaded, one directory for everything built:
 ~/mcp/
    env.sh
    venvs/     sync, eval, lab, cuda12
-   models/    bge-reranker  (shared by both services)
+   models/    bge-reranker  (shared by all four services)
    data/      sciencepcm/{abstracts,passages-2019-2025,questions}
               openalex/abstracts            134 GB
 /datadisk/index/

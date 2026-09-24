@@ -1,5 +1,4 @@
 using Lucene.Net.Search;
-using Microsoft.ML.OnnxRuntime;
 using SciencePcm.Embed;
 using SciencePcm.Index;
 
@@ -76,33 +75,30 @@ public sealed class RetrievalService : IDisposable
 {
     private readonly LexicalSearcher _lexical;
     private readonly LexicalSearcher? _passages;
-    private readonly InferenceSession _session;
-    private readonly ThreadLocal<ICrossEncoder> _rerankers;
-    private readonly SemaphoreSlim _rerankSlots;
+    private readonly SharedReranker _reranker;
+    private readonly bool _ownsReranker;
     private readonly ServerOptions _options;
 
-    public RetrievalService(ServerOptions options)
+    public RetrievalService(ServerOptions options, SharedReranker? sharedReranker = null)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(options.MaxConcurrentReranks, 1);
         _options = options;
-        _rerankSlots = new SemaphoreSlim(options.MaxConcurrentReranks, options.MaxConcurrentReranks);
+        _ownsReranker = sharedReranker is null;
         _lexical = new LexicalSearcher(
             options.IndexPath, 4, options.ParallelSearch, options.CitationPriorWeight);
-        _passages = string.IsNullOrWhiteSpace(options.PassageIndexPath)
-            ? null
-            : new LexicalSearcher(options.PassageIndexPath, 4, options.ParallelSearch);
-
-        _session = TextEmbedder.CreateSession(
-            options.CrossEncoderPath,
-            options.Threads,
-            options.UseGpu,
-            deviceId: 0,
-            gpuMemLimitBytes: options.GpuMemoryLimitBytes);
-
-        // Run() is thread-safe so the session is shared, but each tokenizer is not.
-        _rerankers = new ThreadLocal<ICrossEncoder>(() => CrossEncoderFactory.Create(
-            new CrossEncoderOptions(options.CrossEncoderPath, options.Threads, options.MaxTokens),
-            _session), trackAllValues: true);
+        try
+        {
+            _passages = string.IsNullOrWhiteSpace(options.PassageIndexPath)
+                ? null
+                : new LexicalSearcher(options.PassageIndexPath, 4, options.ParallelSearch);
+            _reranker = sharedReranker ?? new SharedReranker(options);
+        }
+        catch
+        {
+            _passages?.Dispose();
+            _lexical.Dispose();
+            throw;
+        }
     }
 
     public int DocumentCount => _lexical.Count;
@@ -235,30 +231,8 @@ public sealed class RetrievalService : IDisposable
         return results;
     }
 
-    private float[] Rerank(string query, IReadOnlyList<LexicalHit> candidates)
-    {
-        _rerankSlots.Wait();
-        try
-        {
-            var encoder = _rerankers.Value!;
-            var scores = new float[candidates.Count];
-
-            for (var start = 0; start < candidates.Count; start += _options.RerankBatch)
-            {
-                var slice = candidates.Skip(start).Take(_options.RerankBatch).ToList();
-                var passages = slice.Select(RerankText).ToList();
-
-                var batchScores = encoder.Score(query, passages);
-                Array.Copy(batchScores, 0, scores, start, batchScores.Length);
-            }
-
-            return scores;
-        }
-        finally
-        {
-            _rerankSlots.Release();
-        }
-    }
+    private float[] Rerank(string query, IReadOnlyList<LexicalHit> candidates) =>
+        _reranker.Score(query, candidates.Select(RerankText).ToArray());
 
     private static string RerankText(LexicalHit hit)
     {
@@ -351,10 +325,7 @@ public sealed class RetrievalService : IDisposable
 
     public void Dispose()
     {
-        foreach (var encoder in _rerankers.Values) encoder.Dispose();
-        _rerankers.Dispose();
-        _rerankSlots.Dispose();
-        _session.Dispose();
+        if (_ownsReranker) _reranker.Dispose();
         _passages?.Dispose();
         _lexical.Dispose();
     }

@@ -6,8 +6,8 @@ and renewable, so expect to do this again.
 Everything runs from one script — `tools/gcr-prep.sh` — which is idempotent. Re-running
 it is safe and cheap; each step checks before acting.
 
-To deploy the MCP server on an already-provisioned box, skip to
-[Deploying the MCP server](#deploying-the-mcp-server).
+For an already-provisioned box, see [operations.md](operations.md), or
+[adding CustomMcp](custommcp.md#deploy-on-the-existing-a100) for the new fourth service.
 
 ---
 
@@ -52,7 +52,7 @@ cd ~/sciencepcm
 bash tools/gcr-prep.sh --check
 ```
 
-`--check` reports the machine, what it would install, and what it would pull, but
+`--check` reports the machine and what it would install or build, but
 changes nothing. **Always do this first** — it is how you catch a wrong host before
 installing 3 GB of toolchain onto it.
 
@@ -62,7 +62,8 @@ installing 3 GB of toolchain onto it.
 bash tools/gcr-prep.sh
 ```
 
-Expect 20-40 minutes, dominated by the corpus download and the torch install.
+The Python dependencies and CUDA runtime dominate initial provisioning. Data
+downloads, model export, and indexing happen in each service's `prepare`, afterwards.
 
 ## 5. Make CUDA visible in your shell
 
@@ -92,23 +93,23 @@ libraries (see [gotchas](#gotchas)).
 | Toolchain | Installs .NET 10 SDK into `~/.dotnet` and `uv` into `~/.local/bin`. |
 | Environments | Creates `sync`, `eval`, `lab` venvs from `requirements/`. |
 | CUDA runtime | Creates a `cuda12` venv with CUDA 12 + cuDNN 9 wheels, writes `env.sh`. |
-| Corpus | Pulls abstracts, passages and questions (~8.4 GB) from the blob store. |
-| Models | Exports MedCPT article + query encoders to ONNX from HuggingFace. |
 | Build | `dotnet build -c Release -p:UseGpu=true`. |
-| Tokenizer parity | Verifies C# tokenisation matches Python. **Must be 6/6.** |
+| Services | Offers to install and enable the shared prepare/tunnel units and four server units, without starting them. Prompts for four serving tokens and the cloud client hash. |
 
-Flags: `--check`, `--skip-pull`, `--force-pull`, `--skip-models`, `--skip-build`.
+Flag: `--check`. Old data/model/index flags have moved out of this script; each
+service owns its preparation. Read [operations.md](operations.md#secrets) before
+installing units, especially when preserving existing client credentials.
 
 Layout produced:
 
 ```
 ~/mcp/
   env.sh                                  source this in new shells
-  sciencepcm/{abstracts,passages-2019-2025,questions}/
-  models/{medcpt-article,medcpt-query}/
   venvs/{sync,eval,lab,cuda12}/
-  .pulled-*                               markers so re-runs skip downloads
 ```
+
+Service preparation then fills `~/mcp/data/`, exports the shared BGE reranker to
+`~/mcp/models/bge-reranker`, and builds indexes under `/datadisk/index/`.
 
 ---
 
@@ -118,12 +119,13 @@ Provisioning worked if all of these hold:
 
 - [ ] Hostname contains `GCRAZGDL`
 - [ ] `gpu` line shows an A100
-- [ ] Tokenizer parity reports **6/6 probes matched**
-- [ ] `source ~/mcp/env.sh` then a `--gpu` benchmark runs without a library error
+- [ ] The GPU build completes
+- [ ] Service preparation completes, including tokenizer parity when available
+- [ ] `source ~/mcp/env.sh` then a service's `serve` starts successfully with its GPU model
 
 Note that the parity check is **tokenizer-only** and never loads the ONNX model, so it
 proves nothing about CUDA. The build succeeding only proves the package resolved. The
-first thing that actually creates a CUDA session is the benchmark — if `LD_LIBRARY_PATH`
+service startup actually creates a CUDA session — if `LD_LIBRARY_PATH`
 or cuDNN are wrong, that is where it surfaces.
 
 ---
@@ -161,18 +163,18 @@ Use `uv pip install --python <venv>/bin/python …`, not `python -m pip`.
 
 ### HuggingFace may be blocked
 
-The script tests reachability before exporting models. If it fails, export on nerds21
-instead, put the result in `mcpserver\__temp\models`, and run
-`.\tools\nerds21-sync.ps1 -IncludeOptional` there — then re-run this script with
-`--skip-models` after pulling.
+Service preparation needs HuggingFace only when the shared model is missing. If
+access is blocked, export `BAAI/bge-reranker-v2-m3` with `tools/export_onnx.py` on a
+connected machine, transfer the complete model directory to
+`~/mcp/models/bge-reranker`, and rerun the service's `prepare`.
 
 ---
 
 
 ## Next
 
-The machine is ready. Data, models and indexes belong to each service and are built by
-its own `prepare`; running, exposing and refreshing are in
+The machine is ready. Each service's `prepare` manages its data and indexes and
+reuses the shared model files; running, exposing and refreshing are in
 [operations.md](operations.md).
 
 ```bash
@@ -180,4 +182,5 @@ source ~/mcp/env.sh
 bash tools/sciencemcp-a100.sh prepare
 bash tools/openalex-a100.sh prepare
 bash tools/mitmcp-a100.sh prepare
+bash tools/custommcp-a100.sh prepare
 ```

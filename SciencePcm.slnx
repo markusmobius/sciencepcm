@@ -1,5 +1,8 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/CustomMcp.Ingest/CustomMcp.Ingest.csproj" />
+    <Project Path="src/CustomMcp.Server/CustomMcp.Server.csproj" />
+    <Project Path="src/MitPcm.Ingester/MitPcm.Ingester.csproj" />
     <Project Path="src/OpenAlex.Index/OpenAlex.Index.csproj" />
     <Project Path="src/OpenAlex.Ingest/OpenAlex.Ingest.csproj" />
     <Project Path="src/OpenAlex.Server/OpenAlex.Server.csproj" />
@@ -11,6 +14,7 @@
     <Project Path="src/SciencePcm.Server/SciencePcm.Server.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/MitPcm.Tests/MitPcm.Tests.csproj" />
     <Project Path="tests/OpenAlex.Server.Tests/OpenAlex.Server.Tests.csproj" />
   </Folder>
 </Solution>

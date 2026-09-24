@@ -1,8 +1,6 @@
 ﻿using System.Diagnostics;
 using System.Text.Json;
 using System.Threading.Channels;
-using Parquet;
-using Parquet.Serialization;
 using SciencePcm.Core;
 
 namespace SciencePcm.Ingest;
@@ -220,18 +218,12 @@ internal static class Program
     {
         var articles = new List<ArticleRow>(options.ShardSize);
         var chunks = new List<ChunkRow>(options.ShardSize * 16);
-        var abstracts = new List<OpenAlexShapedAbstract>(options.ShardSize);
         var shard = 0;
 
         await foreach (var result in reader.ReadAllAsync())
         {
             articles.Add(result.Article);
             chunks.AddRange(result.Chunks);
-
-            if (options.AbstractsDirectory is not null && !string.IsNullOrWhiteSpace(result.Article.Abstract))
-            {
-                abstracts.Add(OpenAlexShapedAbstract.From(result.Article));
-            }
 
             foreach (var chunk in result.Chunks)
             {
@@ -243,13 +235,13 @@ internal static class Program
 
             if (articles.Count >= options.ShardSize)
             {
-                await FlushAsync(options, shard++, articles, chunks, abstracts, stats);
+                await FlushAsync(options, shard++, articles, chunks, stats);
             }
         }
 
         if (articles.Count > 0)
         {
-            await FlushAsync(options, shard, articles, chunks, abstracts, stats);
+            await FlushAsync(options, shard, articles, chunks, stats);
         }
     }
 
@@ -258,43 +250,17 @@ internal static class Program
         int shard,
         List<ArticleRow> articles,
         List<ChunkRow> chunks,
-        List<OpenAlexShapedAbstract> abstracts,
         IngestStats stats)
     {
-        var serializerOptions = new ParquetOptions
-        {
-            CompressionMethod = CompressionMethod.Zstd,
-            CompressionLevel = System.IO.Compression.CompressionLevel.Optimal,
-        };
-
-        var articlePath = Path.Combine(options.OutputDirectory, $"articles-part-{shard:D4}.parquet");
-        var chunkPath = Path.Combine(options.OutputDirectory, $"chunks-part-{shard:D4}.parquet");
-
-        await using (var stream = File.Create(articlePath))
-        {
-            await ParquetSerializer.SerializeAsync(articles, stream, serializerOptions);
-        }
-
-        await using (var stream = File.Create(chunkPath))
-        {
-            await ParquetSerializer.SerializeAsync(chunks, stream, serializerOptions);
-        }
-
-        if (options.AbstractsDirectory is not null)
-        {
-            var abstractPath = Path.Combine(options.AbstractsDirectory, $"abstracts-part-{shard:D4}.parquet");
-            await using var stream = File.Create(abstractPath);
-            await ParquetSerializer.SerializeAsync(abstracts, stream, serializerOptions);
-            stats.Abstracts += abstracts.Count;
-        }
-
+        var abstracts = await CorpusShardWriter.WriteAsync(options.OutputDirectory, options.AbstractsDirectory,
+            shard, articles, chunks);
+        stats.Abstracts += abstracts;
         stats.Articles += articles.Count;
         stats.Chunks += chunks.Count;
-        Console.WriteLine($"  wrote shard {shard:D4}: {articles.Count:N0} articles, {chunks.Count:N0} chunks, {abstracts.Count:N0} abstracts");
+        Console.WriteLine($"  wrote shard {shard:D4}: {articles.Count:N0} articles, {chunks.Count:N0} chunks, {abstracts:N0} abstracts");
 
         articles.Clear();
         chunks.Clear();
-        abstracts.Clear();
     }
 
     private static async Task WriteReportAsync(Options options, int discovered, IngestStats stats, TimeSpan elapsed)

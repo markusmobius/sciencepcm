@@ -1,6 +1,6 @@
 # Retrieval
 
-Both services share one engine: `src/SciencePcm.Index/LexicalIndex.cs` for the index
+All four services share one engine: `src/SciencePcm.Index/LexicalIndex.cs` for the index
 and query, `src/SciencePcm.Server/RetrievalService.cs` for the pipeline. A query is BM25F
 over a fielded Lucene index, then a `bge-reranker-v2-m3` cross-encoder over the top 100.
 
@@ -91,7 +91,10 @@ outside its own top 50. When a paper is missing, look at the first stage.
 
 ## Reranker
 
-`BAAI/bge-reranker-v2-m3`, exported to ONNX, shared by both services.
+`BAAI/bge-reranker-v2-m3`, exported to ONNX. All four services share the model files,
+not an inference session across processes. CustomMcp shares one loaded session across
+its own named collections. The measurements below predate CustomMcp and do not
+measure relevance on its PDS collections.
 
 | reranker | nDCG@10 | hit@1 | notes |
 | --- | --- | --- | --- |

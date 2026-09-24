@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RestoreAdditionalProjectSources>https://www.legopds.projectratio.net/nuget/index.json</RestoreAdditionalProjectSources>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../SciencePcm.Ingest/SciencePcm.Ingest.csproj" />
+    <ProjectReference Include="../SciencePcm.Index/SciencePcm.Index.csproj" />
+    <PackageReference Include="BlobDataMachine" Version="1.260924.33925" ExcludeAssets="contentFiles" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="../../custom_mcps/pds.json" Link="custom_mcps/pds.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

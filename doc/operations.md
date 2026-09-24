@@ -1,17 +1,17 @@
 # Operations
 
-Day-to-day running of the three services. Provisioning a fresh box is
+Day-to-day running of the four services. Provisioning a fresh box is
 [provisioning.md](provisioning.md); this assumes that is done.
 
 ## Secrets
 
-Four, all living in the installed unit files rather than the repo: a bearer token per
+Five, all living in the installed unit files rather than the repo: a bearer token per
 service, and the blob-store client hash `mcp-prepare` needs to pull the digest.
 
-`tools/gcr-prep.sh` asks for all four when it installs the units, and asks again on every
+`tools/gcr-prep.sh` asks for all five when it installs the units, and asks again on every
 re-run so nothing is silently carried forward unseen. A blank answer keeps whatever is
 already in the installed unit, or failing that the matching variable from your shell
-(`$SCIENCEPCM_TOKEN`, `$OPENALEX_TOKEN`, `$MITMCP_TOKEN`, `$legopds_clienthash` or
+(`$SCIENCEPCM_TOKEN`, `$OPENALEX_TOKEN`, `$MITMCP_TOKEN`, `$CUSTOMMCP_TOKEN`, `$legopds_clienthash` or
 `$CLOUDPDS_CLIENT_HASH`) — the prompt says which, and how many characters it is. You can
 also `sudoedit` them afterwards:
 
@@ -19,6 +19,7 @@ also `sudoedit` them afterwards:
 sudoedit /etc/systemd/system/mcp-science-server.service     # Environment="SCIENCEPCM_TOKEN=..."
 sudoedit /etc/systemd/system/mcp-openalex-server.service    # Environment="OPENALEX_TOKEN=..."
 sudoedit /etc/systemd/system/mcp-mit-server.service         # Environment="MITMCP_TOKEN=..."
+sudoedit /etc/systemd/system/mcp-custom-server.service      # Environment="CUSTOMMCP_TOKEN=..."
 sudoedit /etc/systemd/system/mcp-prepare.service            # Environment="legopds_clienthash=..."
 sudo systemctl daemon-reload
 ```
@@ -28,11 +29,13 @@ every configured client at once.
 
 The client hash has to be in the unit because systemd starts services with an empty
 environment — a value exported only from your login profile is not visible at boot.
-Without it the pull fails and each `prepare` logs `pull failed; continuing with the
-digest already on disk`, so the services still come up, just without fresh data.
+Without it cloud preparation can fail. CustomMcp requires a successful fresh PDS
+download by default; use an explicit `prepare --offline` only for a deliberate
+recovery from its existing cache. A failed shared preparation blocks dependent
+servers from starting.
 
-Left empty, a server starts unauthenticated and prints `auth: OPEN - no
-SCIENCEPCM_TOKEN set`. Check that line after a restart — an empty value looks exactly
+Left empty, a server starts unauthenticated and logs that authentication is open.
+Check that line after a restart — an empty value looks exactly
 like a working one until someone reaches the endpoint without a token. `/health` never
 needs a token, which is what separates "unreachable" from "wrong token" when debugging.
 
@@ -49,15 +52,22 @@ cd ~/sciencepcm
 bash tools/sciencemcp-a100.sh prepare && bash tools/sciencemcp-a100.sh serve
 bash tools/openalex-a100.sh   prepare && bash tools/openalex-a100.sh   serve
 bash tools/mitmcp-a100.sh     prepare && bash tools/mitmcp-a100.sh     serve
+bash tools/custommcp-a100.sh  prepare && bash tools/custommcp-a100.sh  serve
 ```
 
-`prepare` pulls its service's data, exports the shared reranker if absent, and builds its
-index only when `index-stamp.json` no longer matches the source shards and schema
-version. Safe and cheap to re-run at any time. `check` reports paths, sizes and the index
-schema version without starting anything.
+`prepare` pulls its service's data, exports the shared reranker if absent, and builds
+stale indexes. Existing archive services use `index-stamp.json` for freshness;
+CustomMcp publishes source-bound generations through `current.json`. Unchanged
+indexes are reused. `check` is a local preflight without starting a server.
 
-All three scripts pass anything after `serve` to the server, e.g.
-`serve --citation-prior 2.0`.
+All four scripts pass anything after `serve` to the server, e.g.
+`serve --rerank-candidates 200`.
+
+CustomMcp reads named cloud PDS collections from
+[custom_mcps/pds.json](../custom_mcps/pds.json), ingests them on the A100, and serves
+`/mcp/<name>`. It is independent of the old MIT JATS archive and the OpenAlex ID
+subsets. See [CustomMcp deployment](custommcp.md#deploy-on-the-existing-a100) when
+adding it to an already-running box; existing server processes need not restart.
 
 ## As services
 
@@ -77,16 +87,17 @@ units by hand skips the rewrite.
 Start them when you are ready for the rebuild:
 
 ```bash
-sudo systemctl start mcp-science-server mcp-openalex-server mcp-mit-server mcp-tunnel
+sudo systemctl start mcp-science-server mcp-openalex-server mcp-mit-server mcp-custom-server mcp-tunnel
 ```
 
 | unit | job |
 | --- | --- |
-| `mcp-prepare` | runs all three `prepare`s **in sequence**; the servers `Requires=` it |
+| `mcp-prepare` | runs all four `prepare`s **in sequence**; the servers `Requires=` it |
 | `mcp-science-server` | port 8080 |
 | `mcp-openalex-server` | port 8081 |
 | `mcp-mit-server` | port 8082 |
-| `mcp-tunnel` | reverse SSH, 9201→8080, 9202→8081 and 9203→8082 |
+| `mcp-custom-server` | port 8083, all configured PDS collections |
+| `mcp-tunnel` | reverse SSH, 9201→8080, 9202→8081, 9203→8082 and 9204→8083 |
 | `mcp-console` | the browser console — runs on the *relay*, not here |
 
 `mcp-prepare` exists because `/datadisk` is wiped on deallocation and the services then
@@ -101,7 +112,7 @@ The GPU box takes no inbound connections. A reverse SSH tunnel makes it appear o
 relay (`www.llmserver.econlabs.org`), where nginx terminates TLS.
 
 ```bash
-./tools/mcp-tunnel.sh                          # all three forwards
+./tools/mcp-tunnel.sh                          # all four forwards
 FORWARDS="9201:8080" ./tools/mcp-tunnel.sh     # just one
 ```
 
@@ -110,12 +121,13 @@ FORWARDS="9201:8080" ./tools/mcp-tunnel.sh     # just one
 | 9201 | 8080 | `https://www.sciencemcp.econlabs.org/mcp` |
 | 9202 | 8081 | `https://www.openalexmcp.econlabs.org/mcp` |
 | 9203 | 8082 | `https://www.mitmcp.econlabs.org/mcp` |
+| 9204 | 8083 | `https://www.custommcp.econlabs.org/mcp/<name>` |
 
 `-R` binds to the relay's loopback, so the ports are never directly exposed — only nginx
 reaches them. Verify with `ss -tlnp | grep 9201` on the relay.
 
-The vhosts are in `deploy/nginx/`, each carrying its own install and certbot commands in
-a header comment. **CORS lives in the app for servers we own and in nginx only for ones
+The vhosts are in `deploy/nginx/`; CustomMcp DNS and certificate setup is in
+[its runbook](custommcp.md#expose-on-the-relay). **CORS lives in the app for servers we own and in nginx only for ones
 we do not** — set in both places, browsers see a duplicated
 `Access-Control-Allow-Origin` and reject the response outright.
 
@@ -134,7 +146,8 @@ path fails immediately instead of on someone's first question.
 
 ## Pointing an LLM at it
 
-MCP over Streamable HTTP at `/mcp`. In VS Code, `.vscode/mcp.json`:
+MCP over Streamable HTTP at `/mcp` for the archive services and `/mcp/<name>` for
+CustomMcp or OpenAlex subsets. In VS Code, `.vscode/mcp.json`:
 
 ```json
 {
@@ -153,7 +166,7 @@ MCP SDK **silently drops unknown argument names**, so a client sending a misspel
 outdated parameter gets the default back with no error — which is exactly how a customer
 lost a day to `limit` once being called `k`.
 
-For poking at either server by hand, `https://www.mcptest.econlabs.org` runs
+For poking at any server by hand, `https://www.mcptest.econlabs.org` runs
 `src/SciencePcm.Inspector` on the relay. Locally:
 
 ```bash
@@ -165,7 +178,9 @@ change.
 
 ## Refreshing the data
 
-Both corpora are produced elsewhere and pushed to the blob store; the A100 only pulls.
+The three existing archive services consume Parquet produced elsewhere and pushed
+to the blob store. CustomMcp instead downloads configured PDS files and ingests them
+on the A100.
 
 ```powershell
 # nerds21: re-ingest and upload
@@ -179,10 +194,17 @@ Both corpora are produced elsewhere and pushed to the blob store; the A100 only 
 bash tools/sciencemcp-a100.sh prepare
 bash tools/openalex-a100.sh prepare
 bash tools/mitmcp-a100.sh prepare
+bash tools/custommcp-a100.sh prepare
 ```
 
-No `--force` flag on this side. The blob store transfers only what differs, and the index
-stamp decides whether a rebuild is needed.
+No `--force` flag on this side. The archive pullers transfer changed files and use
+index stamps. CustomMcp downloads a fresh PDS into staging, then reuses its shards
+and indexes when the source hash and preparation settings are unchanged.
+
+For CustomMcp, configuration/source/chunk changes produce a new generation; restart
+`mcp-custom-server` after preparation to switch readers and endpoint definitions.
+Old generations remain on disk until explicitly removed after the switch. Avoid
+restarting the shared preparation unit merely to refresh one running service.
 
 ## Disks
 
@@ -193,7 +215,7 @@ stamp decides whether a rebuild is needed.
 
 `/datadisk` is local NVMe (1.4 GB/s) and ephemeral. The OpenAlex index is larger than the
 free space on the 1 TB OS disk, so **there is no durable copy** — a deallocation costs a
-full rebuild rather than an rsync. Both scripts fail rather than fall back to the OS disk
+full rebuild rather than an rsync. All four scripts fail rather than fall back to the OS disk
 if `/datadisk` is missing.
 
 Storage was the whole latency story once: the index on a managed disk gave 95% iowait and

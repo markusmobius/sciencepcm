@@ -268,7 +268,7 @@ public static class Program
 
         build --input <glob> --out <dir> [options]
           --schema abstracts|openalex|chunks   Default: abstracts
-                    --metadata <glob>            Article metadata to join when schema is chunks.
+          --metadata <glob>            Article metadata to join for abstracts or chunks.
           --threads <n>               Indexing threads. Default: 8
           --ram-buffer <mb>           Writer buffer. Default: 512
           --optimize                  Merge to one segment. Slow to build, faster to query.

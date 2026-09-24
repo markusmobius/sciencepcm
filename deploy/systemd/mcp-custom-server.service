@@ -1,0 +1,16 @@
+[Unit]
+Description=CustomMcp named PDS collections
+After=network.target mcp-prepare.service
+Requires=mcp-prepare.service
+
+[Service]
+Type=simple
+User=mobius
+WorkingDirectory=/home/mobius/sciencepcm
+Environment=CUSTOMMCP_TOKEN=
+ExecStart=/bin/bash -lc 'source /home/mobius/mcp/env.sh && exec bash tools/custommcp-a100.sh serve'
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

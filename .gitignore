@@ -3,6 +3,10 @@
 ##
 ## Get latest from https://github.com/github/gitignore/blob/main/VisualStudio.gitignore
 
+# Local MIT PDS data, repair artifacts, indexes, and test environments
+/runs/mit-ingest/
+/runs/custommcp/
+
 # User-specific files
 *.rsuser
 *.suo
