@@ -51,16 +51,6 @@
           "query": "Papers by Matthias Sutter on risk preferences"
         }
       }
-    },
-    {
-      "name": "oldalexmcp",
-      "url": "https://www.academic.econlabs.org/mcp",
-      "toolOrder": [ "search_works" ],
-      "suggestions": {
-        "search_works": {
-          "query": "Papers by Matthias Sutter on risk preferences"
-        }
-      }
     }
   ]
 }
