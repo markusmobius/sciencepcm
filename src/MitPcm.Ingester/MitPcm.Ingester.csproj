@@ -5,7 +5,6 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <RestoreAdditionalProjectSources>https://www.legopds.projectratio.net/nuget/index.json</RestoreAdditionalProjectSources>
   </PropertyGroup>
 
   <ItemGroup>
